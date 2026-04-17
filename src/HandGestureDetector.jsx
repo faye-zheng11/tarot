@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
  * HandGestureDetector
  * Loads MediaPipe via CDN and emits normalized hand landmarks.
  */
-export function HandGestureDetector({ onHandsDetected, onPinchDetected }) {
+export function HandGestureDetector({ onHandsDetected, onPinchDetected, onCameraStateChange }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const handsRef = useRef(null);
@@ -12,6 +12,8 @@ export function HandGestureDetector({ onHandsDetected, onPinchDetected }) {
   const lastPinchStateRef = useRef({ left: false, right: false });
   const lastFrameTsRef = useRef(0);
   const scriptsLoadedRef = useRef(false);
+  const initializedRef = useRef(false);
+  const cameraStartedRef = useRef(false);
 
   useEffect(() => {
     if (scriptsLoadedRef.current) return;
@@ -27,6 +29,7 @@ export function HandGestureDetector({ onHandsDetected, onPinchDetected }) {
     script1.onload = () => {
       script2.onload = () => {
         scriptsLoadedRef.current = true;
+        onCameraStateChange?.('loading');
         initializeHands();
       };
       document.body.appendChild(script2);
@@ -40,7 +43,24 @@ export function HandGestureDetector({ onHandsDetected, onPinchDetected }) {
     };
   }, []);
 
+  useEffect(() => {
+    const resumeByUserGesture = () => {
+      if (!scriptsLoadedRef.current || cameraStartedRef.current) return;
+      onCameraStateChange?.('loading');
+      initializeHands();
+    };
+    window.addEventListener('pointerdown', resumeByUserGesture, { passive: true });
+    window.addEventListener('touchstart', resumeByUserGesture, { passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', resumeByUserGesture);
+      window.removeEventListener('touchstart', resumeByUserGesture);
+    };
+  }, []);
+
   const initializeHands = async () => {
+    if (initializedRef.current && cameraStartedRef.current) return;
+    initializedRef.current = true;
+
     if (!window.Hands || !window.Camera) {
       setTimeout(initializeHands, 100);
       return;
@@ -120,13 +140,18 @@ export function HandGestureDetector({ onHandsDetected, onPinchDetected }) {
         },
         width: 640,
         height: 480,
+        facingMode: 'user',
       });
 
       await camera.start();
       cameraRef.current = camera;
+      cameraStartedRef.current = true;
+      onCameraStateChange?.('ready');
     } catch (err) {
       console.warn('Gesture detection unavailable:', err.message);
       onHandsDetected?.([]);
+      onCameraStateChange?.('needs-user-gesture');
+      cameraStartedRef.current = false;
     }
   };
 

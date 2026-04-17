@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState, useEffect, Suspense } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { Stars, useTexture, Float, Environment, Trail, MeshReflectorMaterial } from '@react-three/drei';
+import { Stars, useTexture, Float, Environment, Trail } from '@react-three/drei';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import gsap from 'gsap';
 import * as THREE from 'three';
@@ -405,6 +405,7 @@ function SceneContent({
   gestureFlipToken,
   raycastEnabled,
   onHoverCard,
+  isPortraitMobile,
 }) {
   const [backMap] = useTexture(['/Card1.jpg']);
   const resultMaps = useTexture(RESULT_PATHS);
@@ -437,28 +438,13 @@ function SceneContent({
       <Environment preset="city" />
       <Stars radius={100} depth={60} count={3000} factor={4} saturation={0} fade speed={0.6} />
       <DeepSpaceDust />
-      {!selected && (
-        <mesh position={[0, -2.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <planeGeometry args={[22, 22]} />
-          <MeshReflectorMaterial
-            blur={[280, 72]}
-            resolution={512}
-            mixBlur={1}
-            mixStrength={0.35}
-            roughness={0.95}
-            depthScale={0.7}
-            minDepthThreshold={0.4}
-            maxDepthThreshold={1.4}
-            color="#120b2a"
-            metalness={0.08}
-            transparent
-            opacity={0.35}
-          />
-        </mesh>
-      )}
 
       {/* ── Ring: hidden entirely once a card is selected ── */}
-      <RingGroup stopped={!!selected} swipeOffset={scrollOffset} verticalOffset={-0.95}>
+      <RingGroup
+        stopped={!!selected}
+        swipeOffset={scrollOffset}
+        verticalOffset={isPortraitMobile ? -0.75 : -0.95}
+      >
         {!selected &&
           cardAngles.map((angle, i) => (
             <RingCard
@@ -473,7 +459,7 @@ function SceneContent({
       </RingGroup>
 
       {selected && (
-        <group position={[0, -0.62, 0]}>
+        <group position={[0, isPortraitMobile ? -0.45 : -0.62, 0]}>
           <SelectedCard
             key={selected.id}
             startTransform={selected.startTransform}
@@ -510,6 +496,7 @@ function App() {
   const [gestureState, setGestureState] = useState('NONE');
   const [handDetected, setHandDetected] = useState(false);
   const [raycastEnabled, setRaycastEnabled] = useState(false);
+  const [cameraState, setCameraState] = useState('loading');
   const hoveredCardRef = useRef(null);
   const lastHoverSelectTsRef = useRef(0);
   const wasPalmRef = useRef(false);
@@ -517,9 +504,11 @@ function App() {
   const selectedAtRef = useRef(0);
   const flipArmedRef = useRef(false);
   const palmReleasedAfterSelectRef = useRef(false);
+  const autoFlipTimerRef = useRef(null);
   const [typedDescription, setTypedDescription] = useState('');
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [sceneSeed, setSceneSeed] = useState(0);
+  const [isPortraitMobile, setIsPortraitMobile] = useState(false);
 
   const canvasWrapRef = useRef(null);
   const gestureManagerRef = useRef(
@@ -547,6 +536,10 @@ function App() {
   };
 
   const handleCardFlip = () => {
+    if (autoFlipTimerRef.current) {
+      window.clearTimeout(autoFlipTimerRef.current);
+      autoFlipTimerRef.current = null;
+    }
     flipArmedRef.current = false;
     setFlipped(true);
     setTimeout(() => setPanelVisible(true), 520);
@@ -565,6 +558,7 @@ function App() {
       setGestureState('NONE');
       setHandDetected(false);
       setRaycastEnabled(false);
+      setCameraState('loading');
       hoveredCardRef.current = null;
       lastHoverSelectTsRef.current = 0;
       wasPalmRef.current = false;
@@ -572,12 +566,33 @@ function App() {
       selectedAtRef.current = 0;
       flipArmedRef.current = false;
       palmReleasedAfterSelectRef.current = false;
+      if (autoFlipTimerRef.current) {
+        window.clearTimeout(autoFlipTimerRef.current);
+        autoFlipTimerRef.current = null;
+      }
       setSceneSeed((v) => v + 1);
       gestureManagerRef.current.reset();
       document.body.style.cursor = 'auto';
       setTimeout(() => setIsTransitioning(false), 260);
     }, 380);
   };
+
+  useEffect(() => {
+    if (!selected || flipped) return undefined;
+    if (autoFlipTimerRef.current) {
+      window.clearTimeout(autoFlipTimerRef.current);
+    }
+    autoFlipTimerRef.current = window.setTimeout(() => {
+      setGestureFlipToken((token) => token + 1);
+      autoFlipTimerRef.current = null;
+    }, 1000);
+    return () => {
+      if (autoFlipTimerRef.current) {
+        window.clearTimeout(autoFlipTimerRef.current);
+        autoFlipTimerRef.current = null;
+      }
+    };
+  }, [selected, flipped]);
 
   useEffect(() => {
     if (!panelVisible || !selectedCardData?.description) {
@@ -595,6 +610,21 @@ function App() {
     }, 26);
     return () => window.clearInterval(timer);
   }, [panelVisible, selectedCardData]);
+
+  useEffect(() => {
+    const updateViewportMode = () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      setIsPortraitMobile(w <= 768 && h > w);
+    };
+    updateViewportMode();
+    window.addEventListener('resize', updateViewportMode);
+    window.addEventListener('orientationchange', updateViewportMode);
+    return () => {
+      window.removeEventListener('resize', updateViewportMode);
+      window.removeEventListener('orientationchange', updateViewportMode);
+    };
+  }, []);
 
   const dispatchPointerToCanvas = (normalizedPos, eventTypes) => {
     if (!canvasWrapRef.current) return false;
@@ -706,6 +736,10 @@ function App() {
   const guideText = selected
     ? '再次张开掌心，揭示你的命运'
     : '握拳左右滑动以浏览，张开掌心选中你的命运';
+  const cameraConfig = isPortraitMobile
+    ? { position: [0, 0.2, 10], fov: 54 }
+    : { position: [0, 0.5, 11], fov: 48 };
+  const exposure = isPortraitMobile ? 1.2 : 1.15;
 
   return (
     <div
@@ -724,13 +758,15 @@ function App() {
       <HandGestureDetector
         onHandsDetected={handleHandsDetected}
         onPinchDetected={handlePinchDetected}
+        onCameraStateChange={setCameraState}
       />
 
       {/* ── Minimal Top Guide ── */}
       <div
+        className="top-guide"
         style={{
           position: 'absolute',
-          top: 10,
+          top: 'max(10px, env(safe-area-inset-top))',
           left: '50%',
           transform: 'translateX(-50%)',
           textAlign: 'center',
@@ -772,15 +808,19 @@ function App() {
       </div>
 
       {/* ── 3D Canvas area ── */}
-      <div ref={canvasWrapRef} style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+      <div
+        ref={canvasWrapRef}
+        className="canvas-shell"
+        style={{ flex: 1, minHeight: 0, position: 'relative', touchAction: 'none' }}
+      >
         <Canvas
           style={{ width: '100%', height: '100%', pointerEvents: panelVisible ? 'none' : 'auto' }}
-          camera={{ position: [0, 0.5, 11], fov: 48 }}
+          camera={cameraConfig}
           shadows
           gl={{
             antialias: true,
             toneMapping: THREE.ACESFilmicToneMapping,
-            toneMappingExposure: 1.15,
+            toneMappingExposure: exposure,
           }}
         >
           <Suspense fallback={null}>
@@ -795,6 +835,7 @@ function App() {
               gestureFlipToken={gestureFlipToken}
               raycastEnabled={raycastEnabled}
               onHoverCard={handleHoverCard}
+              isPortraitMobile={isPortraitMobile}
             />
           </Suspense>
         </Canvas>
@@ -821,6 +862,7 @@ function App() {
 
       {flipped && (
         <button
+          className="reset-btn"
           onClick={handleReset}
           aria-label="重新抽牌"
           style={{
@@ -856,12 +898,13 @@ function App() {
 
       {/* ── Result panel — in-flow layout, no canvas overlap ── */}
       <div
+        className="result-panel"
         style={{
           position: 'relative',
           margin: panelVisible
             ? '0 clamp(10px,2vw,22px) max(10px, env(safe-area-inset-bottom))'
             : '0 clamp(10px,2vw,22px) 0',
-          maxHeight: panelVisible ? '320px' : '0px',
+          maxHeight: panelVisible ? 'min(40vh, 300px)' : '0px',
           opacity: panelVisible ? 1 : 0,
           transform: `translateY(${panelVisible ? '0' : '10px'})`,
           transition:
@@ -875,7 +918,8 @@ function App() {
           padding: 'clamp(14px,2vw,22px) clamp(16px,3.8vw,36px) clamp(14px,2vw,20px)',
           zIndex: 30,
           boxShadow: '0 -8px 48px rgba(0,0,0,0.6)',
-          overflow: 'hidden',
+          overflowX: 'hidden',
+          overflowY: panelVisible ? 'auto' : 'hidden',
           pointerEvents: panelVisible ? 'auto' : 'none',
         }}
       >
@@ -893,6 +937,7 @@ function App() {
         />
 
         <div
+          className="result-panel-content"
           style={{
             maxWidth: 960,
             margin: '0 auto',
@@ -902,7 +947,7 @@ function App() {
             gap: 'clamp(16px,4vw,44px)',
           }}
         >
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="result-panel-text" style={{ flex: 1, minWidth: 0 }}>
             <div
               style={{
                 fontSize: 10,
@@ -917,6 +962,7 @@ function App() {
               命运揭示 · Tarot Reading
             </div>
             <h2
+              className="result-title"
               style={{
                 margin: '0 0 12px',
                 fontSize: 'clamp(16px,2vw,21px)',
@@ -939,6 +985,7 @@ function App() {
               }}
             />
             <p
+              className="result-desc"
               style={{
                 color: 'rgba(247,239,216,0.9)',
                 fontSize: 'clamp(13px,1.4vw,15px)',
@@ -968,34 +1015,42 @@ function App() {
         />
       )}
 
-      <div
-        style={{
-          position: 'absolute',
-          top: 'max(8px, env(safe-area-inset-top))',
-          left: 10,
-          zIndex: 45,
-          color: 'rgba(247,239,216,0.78)',
-          fontSize: 11,
-          lineHeight: 1.35,
-          letterSpacing: 0.2,
-          fontFamily: 'monospace',
-          pointerEvents: 'none',
-          background: 'rgba(8,4,24,0.36)',
-          border: '1px solid rgba(212,175,55,0.22)',
-          borderRadius: 8,
-          padding: '6px 8px',
-          backdropFilter: 'blur(4px)',
-          WebkitBackdropFilter: 'blur(4px)',
-        }}
-      >
-        {`Hand detected: ${handDetected ? 'Yes' : 'No'}`}
-        <br />
-        {`Gesture: ${gestureState}`}
-        <br />
-        {`ScrollOffset: ${scrollOffset.toFixed(4)}`}
-        <br />
-        {`FlipArmed: ${flipArmedRef.current ? 'Yes' : 'No'}`}
-      </div>
+      {cameraState !== 'ready' && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 60,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            pointerEvents: 'none',
+            background: 'linear-gradient(180deg, rgba(7,2,26,0.2), rgba(7,2,26,0.42))',
+          }}
+        >
+          <div
+            style={{
+              pointerEvents: 'auto',
+              border: '1px solid rgba(212,175,55,0.52)',
+              borderRadius: 12,
+              padding: '12px 14px',
+              color: '#f7efd8',
+              background: 'rgba(10,5,26,0.75)',
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',
+              textAlign: 'center',
+              maxWidth: 'min(88vw, 360px)',
+              fontSize: 13,
+              lineHeight: 1.5,
+            }}
+          >
+            {cameraState === 'loading'
+              ? '正在初始化摄像头与手势识别...'
+              : '请点击屏幕并允许摄像头权限，启用手势交互'}
+          </div>
+        </div>
+      )}
+
 
       <style>{`
         * { box-sizing: border-box; }
@@ -1004,6 +1059,7 @@ function App() {
         @supports (height: 100dvh) {
           body, #root { height: 100dvh !important; }
         }
+        html, body, #root { width: 100%; overflow: hidden; }
 
         @keyframes titleBreath {
           0%,100% { filter:brightness(0.92); opacity:0.72; }
@@ -1017,6 +1073,59 @@ function App() {
 
         ::-webkit-scrollbar { width:3px; }
         ::-webkit-scrollbar-thumb { background:rgba(212,175,55,0.3); border-radius:2px; }
+
+        @media (max-width: 900px) {
+          .top-guide { width: min(92vw, 560px) !important; }
+          .result-panel {
+            padding: 12px 14px 12px !important;
+          }
+          .result-panel-content { gap: 14px !important; }
+          .result-title { font-size: clamp(15px, 4.2vw, 18px) !important; }
+          .result-desc { font-size: clamp(12px, 3.3vw, 14px) !important; line-height: 1.8 !important; }
+          .reset-btn {
+            width: 44px !important;
+            height: 44px !important;
+            right: max(10px, env(safe-area-inset-right)) !important;
+            top: max(10px, env(safe-area-inset-top)) !important;
+            font-size: 18px !important;
+          }
+        }
+
+        @media (max-width: 600px) {
+          .top-guide {
+            top: max(6px, env(safe-area-inset-top)) !important;
+            width: min(95vw, 440px) !important;
+          }
+          .top-guide > div:first-child {
+            letter-spacing: 2.6px !important;
+            font-size: clamp(9px, 3vw, 11px) !important;
+            margin-bottom: 4px !important;
+          }
+          .top-guide > div:last-child {
+            font-size: clamp(10px, 3.4vw, 12px) !important;
+            line-height: 1.35 !important;
+            color: rgba(247,239,216,0.66) !important;
+          }
+          .canvas-shell {
+            padding-top: max(36px, env(safe-area-inset-top)) !important;
+          }
+          .result-panel {
+            border-radius: 12px !important;
+          }
+          .result-panel-text { min-width: 100% !important; }
+          .result-title { margin-bottom: 8px !important; }
+        }
+
+        @media (max-height: 760px) and (max-width: 900px) {
+          .top-guide {
+            top: max(4px, env(safe-area-inset-top)) !important;
+            width: min(94vw, 500px) !important;
+          }
+          .top-guide > div:first-child { margin-bottom: 2px !important; opacity: 0.84 !important; }
+          .top-guide > div:last-child { opacity: 0.62 !important; }
+          .result-panel { max-height: 42vh !important; }
+          .canvas-shell { padding-top: max(28px, env(safe-area-inset-top)) !important; }
+        }
       `}</style>
     </div>
   );
