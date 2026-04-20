@@ -1,0 +1,79 @@
+card_id,name,description,image_key,result_image,is_active
+1,愚者 (The Fool),这是一个全新的开始。别担心前面的悬崖，像猫一样轻盈地跳跃吧。好奇心虽然会害死猫，但也能让你发现新世界。,Card1.jpg,The Fool.jpg,1
+2,魔术师 (The Magician),你拥有改变局势的一切资源。不管是逗猫棒还是激光笔，只要你动动爪子，现实就会随你而变。相信你的创造力。,Card1.jpg,The Magician.jpg,1
+3,女祭司 (The High Priestess),并不是所有的事都需要奔跑。现在是静坐、观察和觉察的时刻。你的直觉比导航更准，真相藏在深邃的瞳孔里。,Card1.jpg,The High Priestess.jpg,1
+4,皇后 (The Empress),丰盈、母性与感官的享受。找个阳光最充足的地方躺下，现在是享受舒适、被爱与生产力的时刻。生命正在繁茂生长。,Card1.jpg,The Empress.jpg,1
+5,皇帝 (The Emperor),结构、控制与权力的象征。你要像狮子一样守护你的边界。现在需要你展现果断的领导力，把混乱的生活理顺。,Card1.jpg,The Emperor.jpg,1
+6,教皇 (The Hierophant),有时候遵循前辈的足迹是明智的。这代表一种精神指引或对秩序的尊重。加入那个群体，去学习那些传承下来的智慧。,Card1.jpg,The Hierophant.jpg,1
+7,恋人 (The Lovers),这不仅关乎爱情，更关乎心灵的契合与重要的选择。跟随你的本能去建立连接，在这个充满诱惑的世界里找到你的同类。,Card1.jpg,The Lovers.jpg,1
+8,战车 (The Chariot),专注目标，不要被左右两边的纸箱干扰。即使两种情绪在拉扯，也要保持控制力，胜利属于那个坚定直行的勇者。,Card1.jpg,The Chariot.jpg,1
+9,隐士 (The Hermit),暂时关闭外界的喧嚣。去阁楼、去角落、去内心深处寻找光。你需要一段独处的时光，来重新定位你的灵魂航向。,Card1.jpg,The Hermit.jpg,1
+10,命运之轮 (Wheel of Fortune),转运的时刻到了！有时候你是追逐者，有时候你是那个球。接受变化，保持平衡，因为低谷之后必有高峰。,Card1.jpg,Wheel of fortune.jpg,1
+12,正义 (Justice),因果规律在运作。每一个罐罐的获得都源于之前的付出。做一个理性的裁决者，现在是是非曲直自有定论的时刻。,Card1.jpg,Justice_jpg.jpg,1
+13,吊人 (The Hanged Man),停滞期并不代表停摆。尝试倒挂着看世界，你会发现之前忽略的宝藏。牺牲一点当下的安逸，换取更伟大的觉悟。,Card1.jpg,The Hanged Man.jpg,1
+14,死神 (The Death),恐惧源于拒绝改变。让陈旧的部分随风而去吧，死亡是新生的必经之路。剪断过去的束缚，你的新爪子才会更有力。,Card1.jpg,The_Death.jpg,1
+15,节制 (Temperance),调和你的欲望与行动。不要一次性喝完所有的奶，学会慢慢调理你的能量。中庸之道会带你走向持久的宁静。,Card1.jpg,Temperance.jpg,1
+16,恶魔 (The Devil),警惕那些让你上瘾但不健康的束缚。你以为链子锁住了你，其实你可以随时走开。认清你的贪婪，重获自由。,Card1.jpg,The devil.jpg,1
+17,塔 (The Tower),突如其来的剧变虽然痛苦，但它击碎了虚伪的表象。当不稳固的根基瓦解时，你终于有机会在空地上重建。,Card1.jpg,The Tower.jpg,1
+18,星辰 (The Star),治愈的时刻。洗去身上的疲惫，抬头看看那颗指路明灯。不论经历了什么，希望永远不会熄灭，相信奇迹。,Card1.jpg,The Star.jpg,1
+19,月亮 (The Moon),半梦半醒之间，不安在骚动。不要被表面的阴影吓到，运用你的敏锐嗅觉，穿透迷雾，寻找真实的路径。,Card1.jpg,The Moon.jpg,1
+20,太阳 (The Sun),快乐、成功、充满活力的时刻！你是全场的焦点，所有的阴郁都被驱散。尽情展示你的光芒，好运正当时。,Card1.jpg,The sun.jpg,1
+11,力量 (The Strength),真正的力量不是嘶吼，而是内心坚韧的温柔，足以驯服猛兽。,Card1.jpg,The Strength.jpg,1
+21,审判 (Judgement),听到内心的召唤了吗？这不是终结，而是跨越因果的觉醒与重生。,Card1.jpg,The Judgement.jpg,1
+22,世界 (The World),旅程在此刻圆满。你已与世界达成和解，在终点处遇见了完整的自己。,Card1.jpg,The_world.jpg,1
+23,权杖一 (Ace of Wands),灵感的火花闪现，是时候开启你的新计划了。,Card1.jpg,Ace of Wands.jpg,1
+24,权杖二 (Two of Wands),掌握着已有的成就，你在思考如何扩张更大的领地。,Card1.jpg,Two of Wands.jpg,1
+25,权杖三 (Three of Wands),站在高处远眺，你的视野决定了你的版图。,Card1.jpg,Three of Wands.jpg,1
+26,权杖四 (Four of Wands),欢庆与稳定的时刻，这是一个值得停下来分享喜悦的里程碑。,Card1.jpg,Four of Wands.jpg,1
+27,权杖五 (Five of Wands),竞争与混乱并存，在冲突中磨练你的意志。,Card1.jpg,Five of Wands.jpg,1
+28,权杖六 (Six of Wands),胜利的凯歌已奏响，你的努力终于获得了众人的认可。,Card1.jpg,Six of Wands.jpg,1
+29,权杖七 (Seven of Wands),守住你的立场，哪怕身处高处不胜寒，也要勇敢捍卫。,Card1.jpg,Seven of Wands.jpg,1
+30,权杖八 (Eight of Wands),消息正在飞速传递，变化即将来临，请保持敏捷。,Card1.jpg,Eight of Wands.jpg,1
+31,权杖九 (Nine of Wands),虽然伤痕累累，但你已筑起最后的防线，坚持就是胜利。,Card1.jpg,Nine of Wands.jpg,1
+32,权杖十 (Ten of Wands),责任虽重，但终点就在前方，坚持走完最后一公里。,Card1.jpg,Ten of Wands.jpg,1
+33,权杖侍从 (Page of Wands),一个充满激情的冒险信号，保持好奇心去探索未知。,Card1.jpg,Page of Wands.jpg,1
+34,权杖骑士 (Knight of Wands),狂热且果敢的行动派，带着自信冲向你的目标。,Card1.jpg,Knight of Wands.jpg,1
+35,权杖皇后 (Queen of Wands),温暖、自信且极具魅力，用你的热情去感染周围的人。,Card1.jpg,Queen of Wands.jpg,1
+36,权杖国王 (King of Wands),睿智的领导者，你的远见和权威足以掌控大局。,Card1.jpg,King of Wands.jpg,1
+37,圣杯一 (Ace of Cups),爱与情感的源头正在涌动，内心感到前所未有的充盈。,Card1.jpg,Ace of Cups.jpg,1
+38,圣杯二 (Two of Cups),一段平等且和谐的关系，是两个灵魂的深度连接。,Card1.jpg,Two of Cups.jpg,1
+39,圣杯三 (Three of Cups),友谊的聚会，共同举杯分享那些感性的时刻。,Card1.jpg,Three of Cups.jpg,1
+40,圣杯四 (Four of Cups),暂时的倦怠与消极，或许你忽视了上天递来的新机会。,Card1.jpg,Four of Cups.jpg,1
+41,圣杯五 (Five of Cups),不要只盯着打翻的杯子，转身看看，身后还有希望。,Card1.jpg,Five of Cups.jpg,1
+42,圣杯六 (Six of Cups),怀旧的温情，纯真的回忆或老友的重逢温暖了当下。,Card1.jpg,Six of Cups.jpg,1
+43,圣杯七 (Seven of Cups),面对琳琅满目的幻象，请拨开迷雾，看清内心真正的渴望。,Card1.jpg,Seven of Cups.jpg,1
+44,圣杯八 (Eight of Cups),哪怕现状尚可，你也决定追寻更高层次的精神寄托。,Card1.jpg,Eight of Cups.jpg,1
+45,圣杯九 (Nine of Cups),愿望即将达成，这是属于你个人的满足与喜悦时刻。,Card1.jpg,Nine of Cups.jpg,1
+46,圣杯十 (Ten of Cups),情感的终极归宿，家庭的和睦与精神的宁静在此交汇。,Card1.jpg,Ten of Cups.jpg,1
+47,圣杯侍从 (Page of Cups),敏感而富有诗意，一个感性的消息或直觉正在萌芽。,Card1.jpg,Page of Cups.jpg,1
+48,圣杯骑士 (Knight of Cups),浪漫的追随者，带着真诚的情感邀约款款而来。,Card1.jpg,Knight of Cups.jpg,1
+49,圣杯皇后 (Queen of Cups),慈悲且直觉敏锐，她是情感的港湾，懂得温柔的力量。,Card1.jpg,Queen of Cups.jpg,1
+50,圣杯国王 (King of Cups),情感的掌控者，即便内心波涛汹涌，依然能保持儒雅稳重。,Card1.jpg,King of Cups.jpg,1
+51,宝剑一 (Ace of Swords),逻辑如利刃般清晰，突破重重迷雾，看清事实真相。,Card1.jpg,Ace of Swords.jpg,1
+52,宝剑二 (Two of Swords),左右为难的僵局，请静下心来，用理智而非眼睛去抉择。,Card1.jpg,Two of Swords.jpg,1
+53,宝剑三 (Three of Swords),虽有心碎与伤痛，但这是成长与疗愈的必经阶段。,Card1.jpg,Three of Swords.jpg,1
+54,宝剑四 (Four of Swords),精神的休憩，在忙碌的思考中强迫自己按下暂停键。,Card1.jpg,Four of Swords.jpg,1
+55,宝剑五 (Five of Swords),即使赢得了辩论，也可能输掉了人心，这是一场惨胜。,Card1.jpg,Five of Swords.jpg,1
+56,宝剑六 (Six of Swords),离开混乱的岸边，划向平静的水域，时间会平复一切。,Card1.jpg,Six of Swords.jpg,1
+57,宝剑七 (Seven of Swords),策略与规避，有时需要绕开正面冲突，用智慧解决问题。,Card1.jpg,Seven of Swords.jpg,1
+58,宝剑八 (Eight of Swords),束缚你的往往不是环境，而是你内心的恐惧与限制。,Card1.jpg,Eight of Swords.jpg,1
+59,宝剑九 (Nine of Swords),深夜的焦虑与梦魇，记住，大多数担忧只是头脑的幻觉。,Card1.jpg,Nine of Swords.jpg,1
+60,宝剑十 (Ten of Swords),最黑暗的时刻已经过去，黎明就在痛苦的终点。,Card1.jpg,Ten of Swords.jpg,1
+61,宝剑侍从 (Page of Swords),警觉且思维敏捷，像风一样捕捉各种碎片化的信息。,Card1.jpg,Page of Swords.jpg,1
+62,宝剑骑士 (Knight of Swords),势不可挡的冲锋，理智引领行动，但要小心欲速则不达。,Card1.jpg,Knight of Swords.jpg,1
+63,宝剑皇后 (Queen of Swords),独立、冷峻且明晰，她只看事实，不被情绪所左右。,Card1.jpg,Queen of Swords.jpg,1
+64,宝剑国王 (King of Swords),法律与逻辑的化身，公正无私，用智慧裁决一切纷争。,Card1.jpg,King of Swords.jpg,1
+65,星币一 (Ace of Pentacles),一个踏实的机遇出现，为未来的丰收播下种子。,Card1.jpg,Ace of Pentacles.jpg,1
+66,星币二 (Two of Pentacles),在多项事务间寻找微妙的平衡，生活就像一场杂耍。,Card1.jpg,Two of Pentacles.jpg,1
+67,星币三 (Three of Pentacles),团队协作与专业精神，共同构建一个稳固的项目。,Card1.jpg,Three of Pentacles.jpg,1
+68,星币四 (Four of Pentacles),紧紧握住手中所拥有的，但也要警惕因过度保守而停滞。,Card1.jpg,Four of Pentacles.jpg,1
+69,星币五 (Five of Pentacles),暂时的物质匮乏或孤独，别忘了寻求路边的光与暖。,Card1.jpg,Five of Pentacles.jpg,1
+70,星币六 (Six of Pentacles),施与受的平衡，资源在流转中体现出真正的价值。,Card1.jpg,Six of Pentacles.jpg,1
+71,星币七 (Seven of Pentacles),耕耘后的静候，在评估收获的同时，也在思考下一步。,Card1.jpg,Seven of Pentacles.jpg,1
+72,星币八 (Eight of Pentacles),专注于当下的打磨，匠人心志是通往卓越的唯一捷径。,Card1.jpg,Eight of Pentacles.jpg,1
+73,星币九 (Nine of Pentacles),享受独立与富足，你已经创造了属于自己的秘密花园。,Card1.jpg,Nine of Pentacles.jpg,1
+74,星币十 (Ten of Pentacles),物质的圆满与家族的传承，这是一种长久的安稳。,Card1.jpg,Ten of Pentacles.jpg,1
+75,星币侍从 (Page of Pentacles),务实的学习者，一个关于学业或财富的新消息正在路上。,Card1.jpg,Page of Pentacles.jpg,1
+76,星币骑士 (Knight of Pentacles),勤恳且可靠，虽然行进缓慢，但每一步都留下了脚印。,Card1.jpg,Knight of Pentacles.jpg,1
+77,星币皇后 (Queen of Pentacles),慷慨且务实，她在大地之母的丰饶中享受高品质生活。,Card1.jpg,Queen of Pentacles.jpg,1
+78,星币国王 (King of Pentacles),成功的实业家，他用稳健和耐心建立了自己的商业帝国。,Card1.jpg,King of Pentacles.jpg,1

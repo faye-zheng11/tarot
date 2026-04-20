@@ -8,7 +8,9 @@
       "Bash(mv \"The Emperor.png\"    \"The_Emperor.png\")",
       "Bash(mv \"The Empress.png\"    \"The_Empress.png\")",
       "Bash(mv \"The Hierophant.png\" \"The_Hierophant.png\")",
-      "Bash(mv \"The Moon.png\"       \"The_Moon.png\")"
+      "Bash(mv \"The Moon.png\"       \"The_Moon.png\")",
+      "Bash(npm run *)",
+      "Bash(pkill -f \"vite\")"
     ]
   }
 }

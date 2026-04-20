@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { POINTER_PIXEL_TO_RAD } from './inputConstants';
 
 /**
  * GestureManager
@@ -10,12 +11,14 @@ export class GestureManager {
   constructor(config = {}) {
     this.config = {
       smoothFactor: config.smoothFactor ?? 0.1,
-      deadZoneX: config.deadZoneX ?? 0.0025,
-      swipeSensitivity: config.swipeSensitivity ?? 2.5,
+      deadZoneX: config.deadZoneX ?? 0.001,
+      swipeSensitivity: config.swipeSensitivity ?? 6,
       inertiaDamping: config.inertiaDamping ?? 0.9,
       stateLockMs: config.stateLockMs ?? 200,
       palmStillMs: config.palmStillMs ?? 100,
       palmStillThreshold: config.palmStillThreshold ?? 0.0032,
+      /** 与环旋转方向一致；自拍镜像若觉得反了可改为 -1 */
+      fistScrollSign: config.fistScrollSign ?? 1,
     };
 
     this.smoothedCursor = { x: 0.5, y: 0.5 };
@@ -27,6 +30,10 @@ export class GestureManager {
     this.lastPalmMoveTs = 0;
     this.palmActionTriggered = false;
     this.lastHasSelectedCard = false;
+    /** 握拳划动：上一帧手掌中心镜像归一化 X（与 RingCarousel 指针公式一致） */
+    this.prevPalmCenterNormX = null;
+    /** 用于张掌确认：上一帧检测到的手势（CLOSED_FIST / OPEN_PALM / OTHER） */
+    this.prevEdgeGesture = null;
   }
 
   reset() {
@@ -38,6 +45,19 @@ export class GestureManager {
     this.lastPalmMoveTs = 0;
     this.palmActionTriggered = false;
     this.lastHasSelectedCard = false;
+    this.prevPalmCenterNormX = null;
+    this.prevEdgeGesture = null;
+  }
+
+  /** 手掌中心 x（归一化 0~1）：腕 + 四指掌根 MCP 平均 */
+  #palmCenterX(landmarks) {
+    if (!landmarks?.length) return 0.5;
+    const ids = [0, 5, 9, 13, 17];
+    let s = 0;
+    ids.forEach((i) => {
+      s += landmarks[i]?.x ?? 0;
+    });
+    return s / ids.length;
   }
 
   process(primaryHand, context = {}) {
@@ -47,6 +67,8 @@ export class GestureManager {
 
     if (!primaryHand) {
       this.prevCursor = null;
+      this.prevPalmCenterNormX = null;
+      this.prevEdgeGesture = null;
       this.#applyInertia();
       this.lastHasSelectedCard = hasSelectedCard;
       return {
@@ -66,7 +88,9 @@ export class GestureManager {
     this.smoothedCursor.x += (rawCursor.x - this.smoothedCursor.x) * this.config.smoothFactor;
     this.smoothedCursor.y += (rawCursor.y - this.smoothedCursor.y) * this.config.smoothFactor;
 
-    const nextState = this.#normalizeState(primaryHand.gesture);
+    /** 当前帧真实手势（不受 stateLock 滞后），用于握拳划动环 */
+    const detectedGesture = this.#normalizeState(primaryHand.gesture);
+    const nextState = detectedGesture;
     const actions = [];
 
     let stateForFrame = this.currentState;
@@ -104,37 +128,59 @@ export class GestureManager {
     }
     this.lastHasSelectedCard = hasSelectedCard;
 
-    if (stateForFrame === 'CLOSED_FIST') {
+    if (detectedGesture === 'CLOSED_FIST') {
       this.palmActionTriggered = false;
-      if (Math.abs(deltaX) >= this.config.deadZoneX) {
-        const impulse = deltaX * this.config.swipeSensitivity;
+      const palmCx = this.#palmCenterX(primaryHand.landmarks);
+      const palmXNorm = 1 - THREE.MathUtils.clamp(palmCx, 0, 1);
+      if (this.prevPalmCenterNormX == null) {
+        this.prevPalmCenterNormX = palmXNorm;
+      }
+      const palmDeltaNorm = palmXNorm - this.prevPalmCenterNormX;
+      this.prevPalmCenterNormX = palmXNorm;
+      const vw = Math.max(320, context.viewportWidth ?? 900);
+      const pixelDelta = palmDeltaNorm * vw;
+      if (Math.abs(pixelDelta) >= 0.75) {
+        const impulse = pixelDelta * POINTER_PIXEL_TO_RAD * this.config.fistScrollSign;
         this.scrollVelocity = impulse;
         this.scrollOffset += impulse;
       }
-    } else if (stateForFrame === 'OPEN_PALM') {
-      const motion = Math.hypot(deltaX, deltaY);
-      if (motion > this.config.palmStillThreshold) {
-        this.lastPalmMoveTs = now;
-      }
-      const stillEnough = now - this.lastPalmMoveTs >= this.config.palmStillMs;
-      if (stillEnough && !this.palmActionTriggered) {
-        this.palmActionTriggered = true;
-        if (hasSelectedCard && !isFlipped) {
-          actions.push({ type: 'flip_selected_card' });
-        } else if (!hasSelectedCard) {
-          actions.push({ type: 'select_at_cursor' });
-        }
-      }
-      this.#applyInertia();
     } else {
-      this.#applyInertia();
+      this.prevPalmCenterNormX = null;
+      if (stateForFrame === 'OPEN_PALM') {
+        const motion = Math.hypot(deltaX, deltaY);
+        if (motion > this.config.palmStillThreshold) {
+          this.lastPalmMoveTs = now;
+        }
+        const stillEnough = now - this.lastPalmMoveTs >= this.config.palmStillMs;
+        const selectionEdgeOnly = Boolean(context.selectionPalmEdgeOnly);
+        if (stillEnough && !this.palmActionTriggered && !selectionEdgeOnly) {
+          this.palmActionTriggered = true;
+          if (hasSelectedCard && !isFlipped) {
+            actions.push({ type: 'flip_selected_card' });
+          } else if (!hasSelectedCard) {
+            actions.push({ type: 'select_at_cursor' });
+          }
+        }
+        this.#applyInertia();
+      } else {
+        this.#applyInertia();
+      }
     }
+
+    if (
+      this.prevEdgeGesture === 'CLOSED_FIST' &&
+      detectedGesture === 'OPEN_PALM' &&
+      context.selectionPalmEdgeOnly
+    ) {
+      actions.push({ type: 'palm_confirm_select' });
+    }
+    this.prevEdgeGesture = detectedGesture;
 
     return {
       cursor: { ...this.smoothedCursor, visible: true },
-      state: stateForFrame,
+      state: detectedGesture,
       scrollOffset: this.scrollOffset,
-      raycastEnabled: stateForFrame === 'OPEN_PALM',
+      raycastEnabled: detectedGesture === 'OPEN_PALM',
       actions,
     };
   }

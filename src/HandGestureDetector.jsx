@@ -4,48 +4,44 @@ import { useEffect, useRef } from 'react';
  * HandGestureDetector
  * Loads MediaPipe via CDN and emits normalized hand landmarks.
  */
-export function HandGestureDetector({ onHandsDetected, onPinchDetected, onCameraStateChange }) {
+export function HandGestureDetector({
+  onHandsDetected,
+  onPinchDetected,
+  onCameraStateChange,
+  onFirstHandLandmarks,
+  onGestureStatusChange,
+  enabled = true,
+}) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const handsRef = useRef(null);
   const cameraRef = useRef(null);
   const lastPinchStateRef = useRef({ left: false, right: false });
   const lastFrameTsRef = useRef(0);
-  const scriptsLoadedRef = useRef(false);
   const initializedRef = useRef(false);
   const cameraStartedRef = useRef(false);
+  const firstHandLandmarksSeenRef = useRef(false);
+  const handsBusyRef = useRef(false);
 
   useEffect(() => {
-    if (scriptsLoadedRef.current) return;
-
-    const script1 = document.createElement('script');
-    script1.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js';
-    script1.async = true;
-
-    const script2 = document.createElement('script');
-    script2.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js';
-    script2.async = true;
-
-    script1.onload = () => {
-      script2.onload = () => {
-        scriptsLoadedRef.current = true;
-        onCameraStateChange?.('loading');
-        initializeHands();
-      };
-      document.body.appendChild(script2);
-    };
-
-    document.body.appendChild(script1);
+    if (!enabled) {
+      stopDetection();
+      onHandsDetected?.([]);
+      onGestureStatusChange?.('off');
+      onCameraStateChange?.('off');
+      return;
+    }
+    onCameraStateChange?.('loading');
+    initializeHands();
 
     return () => {
-      handsRef.current?.close();
-      cameraRef.current?.stop();
+      stopDetection();
     };
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
     const resumeByUserGesture = () => {
-      if (!scriptsLoadedRef.current || cameraStartedRef.current) return;
+      if (!enabled || cameraStartedRef.current) return;
       onCameraStateChange?.('loading');
       initializeHands();
     };
@@ -55,7 +51,17 @@ export function HandGestureDetector({ onHandsDetected, onPinchDetected, onCamera
       window.removeEventListener('pointerdown', resumeByUserGesture);
       window.removeEventListener('touchstart', resumeByUserGesture);
     };
-  }, []);
+  }, [enabled]);
+
+  const stopDetection = () => {
+    cameraRef.current?.stop();
+    cameraRef.current = null;
+    cameraStartedRef.current = false;
+    handsRef.current?.close();
+    handsRef.current = null;
+    initializedRef.current = false;
+    handsBusyRef.current = false;
+  };
 
   const initializeHands = async () => {
     if (initializedRef.current && cameraStartedRef.current) return;
@@ -67,8 +73,7 @@ export function HandGestureDetector({ onHandsDetected, onPinchDetected, onCamera
     }
 
     const hands = new window.Hands({
-      locateFile: (file) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+      locateFile: (file) => `/mediapipe/hands/${file}`,
     });
 
     hands.setOptions({
@@ -84,13 +89,23 @@ export function HandGestureDetector({ onHandsDetected, onPinchDetected, onCamera
     hands.onResults((results) => {
       if (!results.multiHandLandmarks || !results.multiHandedness) {
         onHandsDetected?.([]);
+        onGestureStatusChange?.('no-hand');
         return;
       }
 
+      if (!firstHandLandmarksSeenRef.current) {
+        firstHandLandmarksSeenRef.current = true;
+        onFirstHandLandmarks?.();
+      }
+
       const handsData = [];
+      let primaryGesture = 'OTHER';
       results.multiHandLandmarks.forEach((landmarks, i) => {
         const handedness = results.multiHandedness[i].label;
         const gesture = classifyGesture(landmarks, handedness);
+        if (i === 0) {
+          primaryGesture = gesture;
+        }
 
         const thumb = landmarks[4];
         const index = landmarks[8];
@@ -123,6 +138,13 @@ export function HandGestureDetector({ onHandsDetected, onPinchDetected, onCamera
       });
 
       onHandsDetected?.(handsData);
+      onGestureStatusChange?.(
+        primaryGesture === 'OPEN_PALM'
+          ? 'open-palm'
+          : primaryGesture === 'CLOSED_FIST'
+            ? 'fist'
+            : 'no-hand',
+      );
     });
 
     if (!videoRef.current) return;
@@ -130,12 +152,18 @@ export function HandGestureDetector({ onHandsDetected, onPinchDetected, onCamera
     try {
       const camera = new window.Camera(videoRef.current, {
         onFrame: async () => {
+          if (!enabled || handsBusyRef.current) return;
           const now = performance.now();
-          // Reduce detection rate to stabilize interaction and lower CPU.
-          if (now - lastFrameTsRef.current < 48) return;
+          // Keep 15-20 FPS gesture detection to avoid UI frame drops.
+          if (now - lastFrameTsRef.current < 55) return;
           lastFrameTsRef.current = now;
           if (videoRef.current && handsRef.current) {
-            await handsRef.current.send({ image: videoRef.current });
+            handsBusyRef.current = true;
+            try {
+              await handsRef.current.send({ image: videoRef.current });
+            } finally {
+              handsBusyRef.current = false;
+            }
           }
         },
         width: 640,
@@ -150,53 +178,55 @@ export function HandGestureDetector({ onHandsDetected, onPinchDetected, onCamera
     } catch (err) {
       console.warn('Gesture detection unavailable:', err.message);
       onHandsDetected?.([]);
+      onGestureStatusChange?.('no-hand');
       onCameraStateChange?.('needs-user-gesture');
       cameraStartedRef.current = false;
+      initializedRef.current = false;
     }
   };
 
   const classifyGesture = (landmarks, handedness) => {
     if (!landmarks || landmarks.length < 21) return 'UNKNOWN';
-
-    const thumbTip = landmarks[4];
-    const thumbIp = landmarks[3];
-    const indexTip = landmarks[8];
-    const indexPip = landmarks[6];
-    const middleTip = landmarks[12];
-    const middlePip = landmarks[10];
-    const ringTip = landmarks[16];
-    const ringPip = landmarks[14];
-    const pinkyTip = landmarks[20];
-    const pinkyPip = landmarks[18];
-
-    const isRight = handedness?.toLowerCase() === 'right';
-    const thumbOpen = isRight ? thumbTip.x < thumbIp.x : thumbTip.x > thumbIp.x;
-    const indexOpen = indexTip.y < indexPip.y;
-    const middleOpen = middleTip.y < middlePip.y;
-    const ringOpen = ringTip.y < ringPip.y;
-    const pinkyOpen = pinkyTip.y < pinkyPip.y;
-
-    const openCount = [thumbOpen, indexOpen, middleOpen, ringOpen, pinkyOpen].filter(Boolean).length;
-
-    if (openCount <= 1) return 'CLOSED_FIST';
-    if (openCount >= 4) return 'OPEN_PALM';
+    void handedness;
+    const wrist = landmarks[0];
+    const fingerDefs = [
+      { tip: 8, pip: 6 },
+      { tip: 12, pip: 10 },
+      { tip: 16, pip: 14 },
+      { tip: 20, pip: 18 },
+    ];
+    const dist = (a, b) => Math.hypot((a?.x ?? 0) - (b?.x ?? 0), (a?.y ?? 0) - (b?.y ?? 0));
+    const fingersOpen = fingerDefs.every(({ tip, pip }) => {
+      const tipLm = landmarks[tip];
+      const pipLm = landmarks[pip];
+      return tipLm.y < pipLm.y && dist(tipLm, wrist) > dist(pipLm, wrist) * 1.08;
+    });
+    if (fingersOpen) return 'OPEN_PALM';
+    const fingersClosed = fingerDefs.every(({ tip, pip }) => landmarks[tip].y > landmarks[pip].y);
+    if (fingersClosed) return 'CLOSED_FIST';
     return 'OTHER';
   };
 
   return (
-    <div style={{ position: 'absolute', bottom: 0, left: 0, zIndex: 0, pointerEvents: 'none' }}>
+    <div
+      style={{
+        position: 'absolute',
+        bottom: 8,
+        left: 8,
+        zIndex: 0,
+        pointerEvents: 'none',
+        width: 1,
+        height: 1,
+        overflow: 'hidden',
+      }}
+    >
       <video
         ref={videoRef}
         playsInline
         muted
-        style={{ display: 'none', width: 640, height: 480 }}
+        style={{ width: 1, height: 1, opacity: 0 }}
       />
-      <canvas
-        ref={canvasRef}
-        width={640}
-        height={480}
-        style={{ display: 'none' }}
-      />
+      <canvas ref={canvasRef} width={640} height={480} style={{ display: 'none' }} />
     </div>
   );
 }
