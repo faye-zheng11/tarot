@@ -681,6 +681,19 @@ function App() {
     },
     [tarotDeck],
   );
+  /** 解读用：从完整牌库均匀随机，且不与已落入槽位的牌重复（环上视觉仍用 getCardForRingIndex） */
+  const pickRandomReadingForNextSlot = useCallback((prevSlots) => {
+    if (!tarotDeck.length) return null;
+    const used = new Set();
+    prevSlots.forEach((s) => {
+      if (!s?.reading) return;
+      const id = Number(s.reading.id);
+      if (Number.isFinite(id)) used.add(id);
+    });
+    const pool = tarotDeck.filter((c) => !used.has(Number(c.id)));
+    if (!pool.length) return null;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }, [tarotDeck]);
   const resolveCardData = useCallback(
     (candidate) => {
       if (!candidate) return null;
@@ -767,7 +780,8 @@ function App() {
 
   useEffect(() => {
     const [past, present, future] = drawnCards;
-    if (!panelVisible || appPhase !== 'reading' || !past || !present || !future) {
+    // 与解读面板展开动画解耦：三张牌齐即开始拉流，避免等 panelVisible 才不生成
+    if (appPhase !== 'reading' || !past || !present || !future) {
       setAiSummary('');
       setAiStatus('idle');
       setAiFallbackNotice('');
@@ -796,8 +810,12 @@ function App() {
           }),
           signal: controller.signal,
         });
-        if (!res.ok || !res.body) {
-          throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          throw new Error(errText || `HTTP ${res.status}`);
+        }
+        if (!res.body) {
+          throw new Error(`HTTP ${res.status} (no stream body)`);
         }
         setAiStatus('streaming');
         const reader = res.body.getReader();
@@ -831,10 +849,17 @@ function App() {
         }
 
         setAiStatus('done');
-      } catch {
+      } catch (err) {
         setAiStatus('fallback');
         setAiSummary(fallbackSummary);
-        setAiFallbackNotice('星轨信号微弱，基于牌面提供基础建议。');
+        const msg = typeof err?.message === 'string' ? err.message : '';
+        setAiFallbackNotice(
+          msg.includes('Missing LLM_API_KEY')
+            ? '服务端未配置 LLM_API_KEY，已使用本地结语。'
+            : msg.includes('Failed to fetch')
+              ? '无法连接 /api/chat：本地请确认已 npm run dev（含 Vite 代理）或部署到 Vercel。'
+              : '星轨信号微弱，基于牌面提供基础建议。',
+        );
       } finally {
         window.clearTimeout(timeoutId);
       }
@@ -845,8 +870,9 @@ function App() {
     return () => {
       controller.abort();
       window.clearTimeout(timeoutId);
+      aiRequestKeyRef.current = '';
     };
-  }, [panelVisible, appPhase, drawnCards, fallbackSummary, readingCardsKey]);
+  }, [appPhase, drawnCards, fallbackSummary, readingCardsKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -892,7 +918,7 @@ function App() {
         if (prev.some((s) => s && s.ringIndex === ringIndex)) return prev;
         const nextSlot = prev.findIndex((s) => !s);
         if (nextSlot < 0) return prev;
-        const pickedCard = getCardForRingIndex(ringIndex);
+        const pickedCard = pickRandomReadingForNextSlot(prev);
         if (!pickedCard) return prev;
 
         const slotEl = slotInnerRefs[nextSlot]?.current;
@@ -1025,7 +1051,7 @@ function App() {
         return prev;
       });
     },
-    [appPhase, getCardForRingIndex, tarotDeck],
+    [appPhase, pickRandomReadingForNextSlot, tarotDeck],
   );
 
   const finalizeFlyCommit = useCallback(() => {
