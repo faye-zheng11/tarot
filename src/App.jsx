@@ -1448,7 +1448,14 @@ function App() {
     setIsTransitioning(true);
     setPanelVisible(false);
     setTimeout(() => {
-      setStep(1);
+      setStep(0);
+      setQuestionInput('');
+      setEntryError('');
+      setPermissionError('');
+      setEntryInputInvalid(false);
+      setCameraChecking(false);
+      setGestureEnabled(false);
+      setCameraHintDismissed(false);
       setAppPhase('selection');
       setReshuffling(false);
       setSpreadSlots([null, null, null]);
@@ -1458,6 +1465,7 @@ function App() {
       setAiSummary('');
       setAiStatus('idle');
       setAiFallbackNotice('');
+      aiRequestKeyRef.current = '';
       cosmicIdolKeyRef.current = '';
       starGuideKeyRef.current = '';
       setLockedCosmicIdol(null);
@@ -1486,6 +1494,7 @@ function App() {
       setIsRotating(false);
       setRotationSpeed(0);
       setFocusedRingIndex(0);
+      setCenterIndex(0);
       setFocusTargetIndex(null);
       setGestureUiStatus('no-hand');
       setGestureCursor({ x: 0.5, y: 0.5, visible: false });
@@ -1741,9 +1750,7 @@ function App() {
       ? '牌库加载失败：请确认 public/tarot-deck.csv 存在且格式正确'
       : deckStatus === 'loading'
         ? '正在加载牌库…'
-        : appPhase === 'reading'
-          ? '三张牌已就位，静观牌面依次为你翻开'
-          : '张开手掌翻牌，握拳即为选中。请闭目默念你的问题，静心抽取 3 张分别代表「过去、现在、未来」的牌。';
+        : '';
   const cameraConfig = isPortraitMobile
     ? { position: [0, 0.2, 10], fov: 54 }
     : { position: [0, 0.5, 11], fov: 48 };
@@ -2039,115 +2046,48 @@ function App() {
         onFirstHandLandmarks={() => setCameraHintDismissed(true)}
       />
 
-      {appPhase === 'selection' && (
+      {/* ── 抽牌页顶栏：大标题 / 副标题 / 手势说明 / 动态状态 ── */}
+      {appPhase !== 'reading' && (
         <div
+          className="top-guide tarot-header-root"
           style={{
             position: 'absolute',
             top: 'max(12px, env(safe-area-inset-top))',
-            right: 'max(12px, env(safe-area-inset-right))',
-            zIndex: 30,
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              const next = !gestureEnabled;
-              setGestureEnabled(next);
-              if (!next) {
-                setIsRotating(false);
-                setRotationSpeed(0);
-                setGestureUiStatus('no-hand');
-              }
-            }}
-            style={{
-              border: '1px solid rgba(212,175,55,0.45)',
-              borderRadius: 10,
-              background: gestureEnabled ? 'rgba(28,18,58,0.82)' : 'rgba(12,10,20,0.78)',
-              color: '#f7efd8',
-              fontSize: 12,
-              padding: '7px 10px',
-              letterSpacing: 0.4,
-              cursor: 'pointer',
-              boxShadow: '0 0 16px rgba(0,0,0,0.25)',
-            }}
-          >
-            {gestureEnabled ? '关闭手势识别' : '开启手势识别'}
-          </button>
-        </div>
-      )}
-
-      {/* ── Minimal Top Guide ── */}
-      {appPhase !== 'reading' && (
-        <div
-          className="top-guide"
-          style={{
-            position: 'absolute',
-            top: 'max(10px, env(safe-area-inset-top))',
             left: '50%',
             transform: 'translateX(-50%)',
             textAlign: 'center',
             zIndex: 16,
             pointerEvents: 'none',
             userSelect: 'none',
-            width: 'min(82vw, 620px)',
+            width: 'min(90vw, 560px)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 'clamp(10px, 1.8vh, 16px)',
           }}
         >
-          <div
-            style={{
-              fontSize: 'clamp(10px,1.2vw,13px)',
-              letterSpacing: 'clamp(3px,0.8vw,7px)',
-              textTransform: 'uppercase',
-              marginBottom: 6,
-              fontFamily: 'Georgia,serif',
-              background: 'linear-gradient(90deg,#af8327 0%,#fff1bd 50%,#af8327 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              textShadow: '0 0 12px rgba(212,175,55,0.2)',
-              animation: 'titleBreath 3.6s ease-in-out infinite',
-            }}
-          >
-            神秘塔罗 · MYSTIC TAROT
-          </div>
-          <div
-            className="top-guide-text"
-            style={{
-              color: 'rgba(247,239,216,0.58)',
-              fontSize: 'clamp(10px,1.1vw,13px)',
-              letterSpacing: 1.2,
-              lineHeight: 1.42,
-              fontFamily: 'Georgia,serif',
-              maxWidth: 560,
-              margin: '0 auto',
-            }}
-          >
-            {guideText}
-          </div>
-        </div>
-      )}
-      {appPhase === 'selection' && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 'max(74px, calc(env(safe-area-inset-top) + 62px))',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 20,
-            pointerEvents: 'none',
-            border: '1px solid rgba(245, 206, 122, 0.35)',
-            borderRadius: 11,
-            background: 'rgba(16,10,34,0.7)',
-            color: '#f7efd8',
-            backdropFilter: 'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
-            padding: '7px 12px',
-            fontSize: 'clamp(11px,1.2vw,13px)',
-            letterSpacing: 0.5,
-            boxShadow: '0 0 20px rgba(212,175,55,0.2)',
-            textAlign: 'center',
-            minWidth: 'min(84vw, 280px)',
-          }}
-        >
-          {gestureHintText}
+          <h1 className="tarot-header-title">神秘塔罗 · MYSTIC TAROT</h1>
+          {deckStatus === 'loading' || deckStatus === 'error' ? (
+            <p className="tarot-header-subtitle tarot-header-deck-msg">{guideText}</p>
+          ) : appPhase === 'selection' ? (
+            <>
+              <p className="tarot-header-subtitle">
+                闭目默念你的问题，静心抽取 3 张分别代表「过去、现在、未来」的牌
+              </p>
+              <div className="tarot-instruction-box" aria-label="手势操作说明">
+                <span className="tarot-guide-item">
+                  ✋ <strong>张开手掌</strong> 即为翻牌
+                </span>
+                <span className="tarot-guide-divider" aria-hidden="true">
+                  |
+                </span>
+                <span className="tarot-guide-item">
+                  ✊ <strong>握拳</strong> 即可选中
+                </span>
+              </div>
+              <div className="tarot-gesture-status">{gestureHintText}</div>
+            </>
+          ) : null}
         </div>
       )}
 
@@ -2160,7 +2100,7 @@ function App() {
           minHeight: appPhase === 'reading' ? 'auto' : 0,
           position: appPhase === 'reading' ? 'static' : 'relative',
           touchAction: 'none',
-          paddingTop: appPhase === 'reading' ? 0 : 'clamp(64px, 9vh, 110px)',
+          paddingTop: appPhase === 'reading' ? 0 : 'clamp(118px, 20vh, 178px)',
           overflow: 'visible',
         }}
       >
@@ -2546,7 +2486,7 @@ function App() {
         <button
           className="reset-btn"
           onClick={handleReset}
-          aria-label="重新抽牌"
+          aria-label="重新开始"
           style={{
             position: 'absolute',
             top: 'max(14px, env(safe-area-inset-top))',
@@ -2805,7 +2745,78 @@ function App() {
           overflow-x: hidden;
           overflow-y: auto !important;
         }
-        .result-page .top-guide-text { display: none; }
+        .tarot-header-root {
+          width: min(90vw, 560px);
+        }
+        .tarot-header-title {
+          margin: 0;
+          font-family: Georgia, 'Times New Roman', serif;
+          font-size: clamp(20px, 4.5vw, 32px);
+          font-weight: 600;
+          letter-spacing: clamp(0.12em, 1.2vw, 0.22em);
+          line-height: 1.12;
+          background: linear-gradient(92deg, #c9a227 0%, #fff9e8 45%, #d4af37 100%);
+          -webkit-background-clip: text;
+          background-clip: text;
+          -webkit-text-fill-color: transparent;
+          filter: drop-shadow(0 0 14px rgba(212, 175, 55, 0.35));
+          animation: titleBreath 3.6s ease-in-out infinite;
+        }
+        .tarot-header-subtitle {
+          margin: 0;
+          color: rgba(247, 239, 216, 0.7);
+          font-size: clamp(12px, 2.15vw, 15px);
+          letter-spacing: 0.04em;
+          line-height: 1.58;
+          max-width: 34em;
+          font-family: Georgia, 'Times New Roman', serif;
+        }
+        .tarot-header-deck-msg {
+          color: rgba(247, 239, 216, 0.82);
+        }
+        .tarot-instruction-box {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: center;
+          gap: 8px 14px;
+          padding: 11px 18px;
+          border-radius: 12px;
+          border: 1px solid rgba(212, 175, 55, 0.32);
+          background: rgba(12, 8, 32, 0.78);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          box-shadow: 0 4px 28px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+          font-size: clamp(11px, 1.95vw, 14px);
+          color: rgba(255, 250, 235, 0.96);
+          line-height: 1.45;
+        }
+        .tarot-guide-item strong {
+          color: #ffe7a6;
+          font-weight: 600;
+        }
+        .tarot-guide-divider {
+          color: rgba(212, 175, 55, 0.42);
+          font-weight: 300;
+          user-select: none;
+        }
+        .tarot-gesture-status {
+          font-size: clamp(11px, 1.75vw, 13px);
+          color: rgba(247, 239, 216, 0.55);
+          letter-spacing: 0.06em;
+          line-height: 1.35;
+          min-height: 1.25em;
+        }
+        @media (max-width: 480px) {
+          .tarot-instruction-box {
+            flex-direction: column;
+            gap: 8px;
+            padding: 10px 14px;
+          }
+          .tarot-guide-divider {
+            display: none;
+          }
+        }
 
         .canvas-shell {
           transform: translateZ(0);
@@ -3287,7 +3298,7 @@ function App() {
         ::-webkit-scrollbar-thumb { background:rgba(212,175,55,0.3); border-radius:2px; }
 
         @media (max-width: 900px) {
-          .top-guide { width: min(92vw, 560px) !important; }
+          .top-guide.tarot-header-root { width: min(92vw, 520px) !important; }
           .result-panel {
             padding: 12px 14px 12px !important;
           }
@@ -3303,22 +3314,21 @@ function App() {
         }
 
         @media (max-width: 600px) {
-          .top-guide {
-            top: max(6px, env(safe-area-inset-top)) !important;
-            width: min(95vw, 440px) !important;
+          .top-guide.tarot-header-root {
+            top: max(8px, env(safe-area-inset-top)) !important;
+            width: min(94vw, 440px) !important;
+            gap: 9px !important;
           }
-          .top-guide > div:first-child {
-            letter-spacing: 2.6px !important;
-            font-size: clamp(9px, 3vw, 11px) !important;
-            margin-bottom: 4px !important;
+          .tarot-header-title {
+            font-size: clamp(17px, 5.2vw, 24px) !important;
+            letter-spacing: 0.1em !important;
           }
-          .top-guide > div:last-child {
-            font-size: clamp(10px, 3.4vw, 12px) !important;
-            line-height: 1.35 !important;
-            color: rgba(247,239,216,0.66) !important;
+          .tarot-header-subtitle {
+            font-size: clamp(11px, 3.2vw, 14px) !important;
+            line-height: 1.48 !important;
           }
           .canvas-shell {
-            padding-top: max(58px, env(safe-area-inset-top)) !important;
+            padding-top: max(108px, calc(env(safe-area-inset-top) + 88px)) !important;
           }
           .result-panel {
             border-radius: 12px !important;
@@ -3335,13 +3345,21 @@ function App() {
         }
 
         @media (max-height: 760px) and (max-width: 900px) {
-          .top-guide {
-            top: max(4px, env(safe-area-inset-top)) !important;
+          .top-guide.tarot-header-root {
+            top: max(6px, env(safe-area-inset-top)) !important;
             width: min(94vw, 500px) !important;
+            gap: 7px !important;
           }
-          .top-guide > div:first-child { margin-bottom: 2px !important; opacity: 0.84 !important; }
-          .top-guide > div:last-child { opacity: 0.62 !important; }
-          .canvas-shell { padding-top: max(48px, env(safe-area-inset-top)) !important; }
+          .tarot-header-title {
+            font-size: clamp(16px, 4.2vw, 22px) !important;
+          }
+          .tarot-gesture-status {
+            font-size: clamp(10px, 2.8vw, 12px) !important;
+            opacity: 0.92;
+          }
+          .canvas-shell {
+            padding-top: max(96px, calc(env(safe-area-inset-top) + 72px)) !important;
+          }
         }
       `}</style>
     </div>
