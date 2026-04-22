@@ -36,6 +36,91 @@ const LOCK_ALIGN_MS = 180;
 const GLOW_HOLD_MS = 350;
 const HOLD_DURATION_MS = 800;
 
+function parseCsvLine(line) {
+  const cells = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (ch === ',' && !inQuotes) {
+      cells.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function parseIdolCsv(text) {
+  const lines = String(text || '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = parseCsvLine(lines[0]);
+  const nameIdx = headers.indexOf('name');
+  const posterIdx = headers.indexOf('poster_url');
+  const activeIdx = headers.indexOf('active');
+  if (nameIdx < 0 || posterIdx < 0) return [];
+  return lines.slice(1)
+    .map((line) => {
+      const cols = parseCsvLine(line);
+      const name = String(cols[nameIdx] ?? '').trim();
+      const poster_url = String(cols[posterIdx] ?? '').trim();
+      const activeRaw = String(cols[activeIdx] ?? '1').trim();
+      return {
+        name,
+        poster_url,
+        active: !(activeRaw === '0' || /^false$/i.test(activeRaw)),
+      };
+    })
+    .filter((row) => row.name && row.poster_url);
+}
+
+function parseStarGuide(raw) {
+  const text = String(raw ?? '').replace(/\r/g, '').trim();
+  let body = text;
+  let luckyColor = '';
+  let luckyItem = '';
+  const lc = text.match(/幸运色[：:]\s*([^。\n；;,，]*)(?=\s*幸运物[：:]|$|[。\n；;,，])/u);
+  const li = text.match(/幸运物[：:]\s*([^\n。；;]*)/u);
+  if (lc) luckyColor = lc[1].trim().replace(/^[-:：\s]+/u, '');
+  if (li) luckyItem = li[1].trim().replace(/^[-:：\s]+/u, '');
+
+  // 防止模型把两项写在同一段里，导致 tag 串台
+  luckyColor = luckyColor
+    .split(/幸运物(?:件)?[：:]/u)[0]
+    .replace(/幸运色[：:]/gu, '')
+    .trim();
+  luckyItem = luckyItem
+    .split(/幸运色[：:]/u)[0]
+    .replace(/幸运物(?:件)?[：:]/gu, '')
+    .trim();
+
+  const cutAt = text.search(/\s*幸运[色物][：:]/u);
+  if (cutAt >= 0) body = text.slice(0, cutAt).trim();
+  body = body
+    .replace(/^【星运解读】\s*/u, '')
+    .replace(/\s*幸运色[：:][^。\n]*[。]?/gu, '')
+    .replace(/\s*幸运物[：:][^。\n]*[。]?/gu, '')
+    .replace(/\b[A-Za-z][A-Za-z0-9_.-]{1,}\b/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return { body, luckyColor, luckyItem };
+}
+
 /** 当前 θ 下最靠近相机正前方的环上卡牌索引（与 RingCard 角公式一致） */
 function computeFrontRingIndex(theta) {
   const idx = Math.round(-theta / RING_ANGLE_SLICE);
@@ -442,6 +527,19 @@ function SceneContent({
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 function App() {
+  const [step, setStep] = useState(0);
+  const [questionInput, setQuestionInput] = useState('');
+  const [entryError, setEntryError] = useState('');
+  const [permissionError, setPermissionError] = useState('');
+  const [cameraChecking, setCameraChecking] = useState(false);
+  const [entryInputInvalid, setEntryInputInvalid] = useState(false);
+  const [isIdolFlipped, setIsIdolFlipped] = useState(false);
+  const [idolPool, setIdolPool] = useState([]);
+  /** 进入本次解读后随机锁定，翻牌仅展示此人，不可再次抽取 */
+  const [lockedCosmicIdol, setLockedCosmicIdol] = useState(null);
+  const [starGuideRaw, setStarGuideRaw] = useState('');
+  const [starGuideStatus, setStarGuideStatus] = useState('idle');
+  const [starGuideNotice, setStarGuideNotice] = useState('');
   const [tarotDeck, setTarotDeck] = useState([]);
   const [deckStatus, setDeckStatus] = useState('loading');
   const [pastCard, setPastCard] = useState(null);
@@ -474,6 +572,8 @@ function App() {
   const [aiStatus, setAiStatus] = useState('idle');
   const [aiFallbackNotice, setAiFallbackNotice] = useState('');
   const aiRequestKeyRef = useRef('');
+  const cosmicIdolKeyRef = useRef('');
+  const starGuideKeyRef = useRef('');
   const [cameraHintDismissed, setCameraHintDismissed] = useState(false);
   const hoveredCardRef = useRef(null);
   const lastFistSelectTsRef = useRef(0);
@@ -497,6 +597,7 @@ function App() {
   const lockBounceTriggeredRef = useRef(false);
   const [slotSnapped, setSlotSnapped] = useState([false, false, false]);
   const [reshuffling, setReshuffling] = useState(false);
+  const quickResultBootedRef = useRef(false);
 
   // Ref-based taken set lets gesture callbacks read it without stale-closure issues
   const takenRingIndicesRef = useRef(new Set());
@@ -512,6 +613,41 @@ function App() {
       setCameraHintDismissed(true);
     }
   }, [cameraState]);
+
+  useEffect(() => {
+    if (quickResultBootedRef.current) return;
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('result') !== '1') return;
+    if (!tarotDeck.length) return;
+    quickResultBootedRef.current = true;
+
+    const picks = [tarotDeck[0], tarotDeck[1], tarotDeck[2]].filter(Boolean);
+    if (picks.length < 3) return;
+
+    const seededSlots = picks.map((reading, index) => ({ ringIndex: index, reading }));
+    setSpreadSlots(seededSlots);
+    setPastCard(picks[0]);
+    setPresentCard(picks[1]);
+    setFutureCard(picks[2]);
+    setReadingFlipped([true, true, true]);
+    setQuestionInput((prev) => prev || '今天的整体运势如何？');
+    setAppPhase('reading');
+    setPanelVisible(true);
+    setStep(2);
+  }, [tarotDeck]);
+
+  useEffect(() => {
+    if (appPhase === 'reading') {
+      setStep(2);
+    }
+  }, [appPhase]);
+
+  useEffect(() => {
+    if (appPhase === 'reading' && panelVisible) {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    }
+  }, [appPhase, panelVisible]);
 
   useEffect(() => {
     const el = domCarouselRef.current;
@@ -758,13 +894,65 @@ function App() {
         sections.chain = parts.slice(Math.ceil(n / 3), Math.max(Math.ceil((2 * n) / 3), Math.ceil(n / 3) + 1)).join('，') || normalized;
       if (!sections.action) sections.action = parts.slice(Math.ceil((2 * n) / 3)).join('，') || normalized;
     }
-    return sections;
+    const cleanFateSection = (value) =>
+      String(value ?? '')
+        // 清理列表序号（如 1. / 2: / 1、）的残留标记
+        .replace(/(^|[\n\r])\s*\d+\s*[\.、:：)\]]\s*/g, '$1')
+        // 清理段首孤立标点（如 ".:"）
+        .replace(/(^|[\n\r])\s*[\.:：、]+\s*/g, '$1')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+
+    return {
+      insight: cleanFateSection(sections.insight),
+      chain: cleanFateSection(sections.chain),
+      action: cleanFateSection(sections.action),
+    };
   }, [compactAiSummary, drawnCards]);
   const sectionBoundaries = useMemo(() => ({
     chainStarted: compactAiSummary.includes('【因果串联】'),
     actionStarted: compactAiSummary.includes('【行动建议】'),
   }), [compactAiSummary]);
+  const insightText = formattedAiSummary.insight || '星轨仍在汇聚中。';
+  const connectionText = sectionBoundaries.chainStarted
+    ? formattedAiSummary.chain || '过去的信号正在与你当下共振。'
+    : '命运丝线正在编织，请稍候聆听。';
+  const adviceText = sectionBoundaries.actionStarted
+    ? formattedAiSummary.action || '跟随心念，向前迈出一小步。'
+    : '建议即将显现，先保持心绪稳定。';
+  const adviceItems = useMemo(() => {
+    if (!sectionBoundaries.actionStarted) return [];
+    const source = String(formattedAiSummary.action || '').trim();
+    if (!source) return [];
 
+    const normalizeAdviceItem = (value) =>
+      String(value ?? '')
+        .replace(/^\s*[\.:：、，,;；]+\s*/u, '')
+        .replace(/^\s*(?:\d+|[一二三四五六七八九十])[.、:：)\]]\s*/u, '')
+        .trim();
+
+    const numbered = Array.from(
+      source.matchAll(/(?:^|[\n\r])\s*(?:\d+|[一二三四五六七八九十])[.、:：)\]]?\s*([^\n\r]+)/g),
+    )
+      .map((m) => normalizeAdviceItem(m[1]))
+      .filter(Boolean);
+    if (numbered.length >= 2) return numbered.slice(0, 2);
+
+    const chunks = source
+      .replace(/\s+/g, ' ')
+      .split(/[；;。]/)
+      .map((s) => normalizeAdviceItem(s))
+      .filter(Boolean);
+    if (chunks.length >= 2) return chunks.slice(0, 2);
+
+    return [source];
+  }, [formattedAiSummary.action, sectionBoundaries.actionStarted]);
+  const starParsed = useMemo(() => parseStarGuide(starGuideRaw), [starGuideRaw]);
+  const idolPosterUrl = useMemo(() => {
+    if (!lockedCosmicIdol?.poster_url) return '/Card1.jpg';
+    if (/^https?:\/\//i.test(lockedCosmicIdol.poster_url)) return lockedCosmicIdol.poster_url;
+    return `/${encodeURI(lockedCosmicIdol.poster_url)}`;
+  }, [lockedCosmicIdol]);
   const readingTitle = useMemo(() => {
     if (pastCard && presentCard && futureCard) {
       return [pastCard, presentCard, futureCard].map((c) => c.name).join(' · ');
@@ -807,6 +995,8 @@ function App() {
             pastCard: past,
             presentCard: present,
             futureCard: future,
+            userQuestion: questionInput,
+            intent: 'fate',
           }),
           signal: controller.signal,
         });
@@ -872,7 +1062,114 @@ function App() {
       window.clearTimeout(timeoutId);
       aiRequestKeyRef.current = '';
     };
-  }, [appPhase, drawnCards, fallbackSummary, readingCardsKey]);
+  }, [appPhase, drawnCards, fallbackSummary, readingCardsKey, questionInput]);
+
+  useEffect(() => {
+    if (appPhase !== 'reading') {
+      cosmicIdolKeyRef.current = '';
+      setLockedCosmicIdol(null);
+      setIsIdolFlipped(false);
+      return;
+    }
+    const [past, present, future] = drawnCards;
+    if (!past || !present || !future || idolPool.length === 0) return;
+    if (cosmicIdolKeyRef.current === readingCardsKey) return;
+    cosmicIdolKeyRef.current = readingCardsKey;
+    const activeRows = idolPool.filter((row) => row.active);
+    const source = activeRows.length ? activeRows : idolPool;
+    const pick = source[Math.floor(Math.random() * source.length)];
+    setLockedCosmicIdol(pick);
+    setIsIdolFlipped(false);
+  }, [appPhase, drawnCards, idolPool, readingCardsKey]);
+
+  useEffect(() => {
+    const [past, present, future] = drawnCards;
+    if (appPhase !== 'reading' || !past || !present || !future || !lockedCosmicIdol) {
+      starGuideKeyRef.current = '';
+      setStarGuideRaw('');
+      setStarGuideStatus('idle');
+      setStarGuideNotice('');
+      return;
+    }
+    const sgKey = `${readingCardsKey}::${lockedCosmicIdol.name}`;
+    if (starGuideKeyRef.current === sgKey) return;
+    starGuideKeyRef.current = sgKey;
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 32000);
+    setStarGuideRaw('');
+    setStarGuideStatus('loading');
+    setStarGuideNotice('');
+
+    const consumeStarStream = async () => {
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pastCard: past,
+            presentCard: present,
+            futureCard: future,
+            userQuestion: questionInput,
+            intent: 'starGuide',
+          }),
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          throw new Error(errText || `HTTP ${res.status}`);
+        }
+        if (!res.body) {
+          throw new Error(`HTTP ${res.status} (no stream body)`);
+        }
+        setStarGuideStatus('streaming');
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+          lines.forEach((line) => {
+            const t = line.trim();
+            if (!t || !t.startsWith('data:')) return;
+            const payload = t.slice(5).trim();
+            if (payload === '[DONE]') return;
+            try {
+              const json = JSON.parse(payload);
+              const delta = json?.choices?.[0]?.delta?.content;
+              if (typeof delta === 'string' && delta) {
+                setStarGuideRaw((prev) => prev + delta);
+              }
+            } catch {
+              if (payload) setStarGuideRaw((prev) => prev + payload);
+            }
+          });
+        }
+        setStarGuideStatus('done');
+      } catch (err) {
+        setStarGuideStatus('fallback');
+        setStarGuideRaw('星运信号较弱，先照顾好作息与心情，把期待留给下一次相遇。');
+        const msg = typeof err?.message === 'string' ? err.message : '';
+        setStarGuideNotice(
+          msg.includes('Failed to fetch')
+            ? '无法连接 /api/chat，请确认本地已启动 dev 服务。'
+            : '已使用本地占位星运文案。',
+        );
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    };
+
+    consumeStarStream();
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeoutId);
+    };
+  }, [appPhase, drawnCards, lockedCosmicIdol, questionInput, readingCardsKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -899,6 +1196,22 @@ function App() {
       })
       .catch(() => {
         if (!cancelled) setDeckStatus('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/Tarot_idol.csv')
+      .then((res) => (res.ok ? res.text() : ''))
+      .then((text) => {
+        if (cancelled) return;
+        setIdolPool(parseIdolCsv(text));
+      })
+      .catch(() => {
+        if (!cancelled) setIdolPool([]);
       });
     return () => {
       cancelled = true;
@@ -1103,6 +1416,7 @@ function App() {
       readingFlipTimersRef.current = [];
       setReadingFlipped([false, false, false]);
       setPanelVisible(false);
+      setIsIdolFlipped(false);
       return;
     }
     setReadingFlipped([false, false, false]);
@@ -1134,6 +1448,7 @@ function App() {
     setIsTransitioning(true);
     setPanelVisible(false);
     setTimeout(() => {
+      setStep(1);
       setAppPhase('selection');
       setReshuffling(false);
       setSpreadSlots([null, null, null]);
@@ -1143,6 +1458,13 @@ function App() {
       setAiSummary('');
       setAiStatus('idle');
       setAiFallbackNotice('');
+      cosmicIdolKeyRef.current = '';
+      starGuideKeyRef.current = '';
+      setLockedCosmicIdol(null);
+      setStarGuideRaw('');
+      setStarGuideStatus('idle');
+      setStarGuideNotice('');
+      setIsIdolFlipped(false);
       setReadingFlipped([false, false, false]);
       setFlyCard(null);
       setFlyTrail(null);
@@ -1179,6 +1501,43 @@ function App() {
       setTimeout(() => setIsTransitioning(false), 260);
     }, 380);
   };
+
+  const requestCameraPermission = useCallback(async () => {
+    if (!navigator?.mediaDevices?.getUserMedia) {
+      return false;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      stream.getTracks().forEach((track) => track.stop());
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const handleStartRitual = useCallback(async () => {
+    const trimmedQuestion = questionInput.trim();
+    if (!trimmedQuestion) {
+      setEntryError('宇宙尚未听到你的声音...');
+      setEntryInputInvalid(true);
+      window.setTimeout(() => setEntryInputInvalid(false), 520);
+      return;
+    }
+    setEntryInputInvalid(false);
+    setEntryError('');
+    setPermissionError('');
+    setCameraChecking(true);
+    const granted = await requestCameraPermission();
+    setCameraChecking(false);
+    if (!granted) {
+      setPermissionError('请开启摄像头权限以检测手势建立连结。若拒绝，将无法感应你的能量。');
+      return;
+    }
+    setCameraHintDismissed(false);
+    setGestureEnabled(true);
+    setStep(1);
+    setAppPhase('selection');
+  }, [questionInput, requestCameraPermission]);
 
   useEffect(() => {
     const updateViewportMode = () => {
@@ -1384,30 +1743,291 @@ function App() {
         ? '正在加载牌库…'
         : appPhase === 'reading'
           ? '三张牌已就位，静观牌面依次为你翻开'
-          : pickCount === 0
-            ? '从环中点选三张牌：依次落入过去、现在、未来；每次选中均与当前中心卡牌一一对应'
-            : pickCount === 1
-              ? '已选 1/3 · 继续选择「现在」'
-              : pickCount === 2
-                ? '已选 2/3 · 再选一张完成「未来」'
-                : '正在完成选牌…';
+          : '张开手掌翻牌，握拳即为选中。请闭目默念你的问题，静心抽取 3 张分别代表「过去、现在、未来」的牌。';
   const cameraConfig = isPortraitMobile
     ? { position: [0, 0.2, 10], fov: 54 }
     : { position: [0, 0.5, 11], fov: 48 };
   const exposure = isPortraitMobile ? 1.2 : 1.15;
 
+  if (step === 0) {
+    return (
+      <div className="entry-root">
+        <div className="entry-bg-radial" aria-hidden="true" />
+        <div className="entry-bg-stars" aria-hidden="true" />
+        <div className="entry-bg-aurora" aria-hidden="true" />
+        <div className={`entry-panel ${entryInputInvalid ? 'entry-panel-shake' : ''}`}>
+          <div className="entry-sigil" aria-hidden="true">✦</div>
+          <h1 className="entry-title">
+            星启指南
+            <span>宇宙占星社</span>
+          </h1>
+          <div className="entry-input-wrap">
+            <input
+              className={`entry-input ${entryInputInvalid ? 'entry-input-invalid' : ''}`}
+              value={questionInput}
+              onChange={(e) => {
+                setQuestionInput(e.target.value);
+                if (entryError) setEntryError('');
+                if (entryInputInvalid) setEntryInputInvalid(false);
+              }}
+              placeholder="将你的问题告诉星辰..."
+            />
+            <div className="entry-input-line" />
+          </div>
+          {(entryError || permissionError) && (
+            <div className={`entry-hint ${entryError ? 'entry-hint-ethereal' : 'entry-hint-warn'}`}>
+              {entryError || permissionError}
+            </div>
+          )}
+          <button
+            className="entry-cta"
+            type="button"
+            disabled={cameraChecking}
+            onClick={handleStartRitual}
+          >
+            <span>{cameraChecking ? '正在建立连结...' : '开启连结'}</span>
+            <div className="entry-cta-fill" aria-hidden="true" />
+          </button>
+          <p className="entry-footnote">Astral Chamber • Pure Connection</p>
+        </div>
+        <style>{`
+          html, body, #root {
+            margin: 0;
+            width: 100%;
+            overflow-x: hidden;
+          }
+          .entry-root {
+            width: 100%;
+            min-height: 100vh;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            color: #f7efd8;
+            background: #050508;
+          }
+          .entry-bg-radial {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background: radial-gradient(circle at 50% 50%, rgba(64, 40, 110, 0.58), transparent 62%);
+            opacity: 0.78;
+          }
+          .entry-bg-stars {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background-image: url('https://www.transparenttextures.com/patterns/stardust.png');
+            opacity: 0.24;
+            animation: entryStarsMove 42s linear infinite;
+          }
+          .entry-bg-aurora {
+            position: absolute;
+            inset: -20%;
+            pointer-events: none;
+            background:
+              radial-gradient(circle at 20% 30%, rgba(172, 125, 255, 0.22), transparent 40%),
+              radial-gradient(circle at 80% 60%, rgba(236, 196, 118, 0.16), transparent 42%),
+              radial-gradient(circle at 50% 80%, rgba(123, 92, 242, 0.16), transparent 38%);
+            filter: blur(24px);
+            animation: entryAuroraFlow 20s ease-in-out infinite alternate;
+          }
+          .entry-panel {
+            position: relative;
+            z-index: 10;
+            width: min(640px, 92vw);
+            padding: clamp(30px, 5vw, 42px) clamp(20px, 4vw, 44px);
+            border-radius: 28px;
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.52);
+            transition: transform 0.4s ease;
+          }
+          .entry-panel-shake {
+            animation: entryShake 0.2s ease-in-out 0s 2;
+          }
+          .entry-sigil {
+            position: absolute;
+            top: -30px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 38px;
+            color: rgba(255, 234, 181, 0.6);
+            animation: entryPulse 2s ease-in-out infinite;
+          }
+          .entry-title {
+            margin: 0;
+            text-align: center;
+            color: #e7dab7;
+            font-size: clamp(36px, 5vw, 54px);
+            font-family: Georgia, "Times New Roman", serif;
+            font-weight: 300;
+            letter-spacing: 0.2em;
+            line-height: 1.15;
+            text-shadow: 0 0 15px rgba(224, 213, 176, 0.5);
+          }
+          .entry-title span {
+            display: block;
+            margin-top: 14px;
+            font-size: clamp(16px, 2.2vw, 22px);
+            letter-spacing: 0.5em;
+            opacity: 0.82;
+            font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+          }
+          .entry-input-wrap {
+            position: relative;
+            margin-top: 42px;
+          }
+          .entry-input {
+            width: 100%;
+            border: none;
+            border-bottom: 1px solid rgba(224, 213, 176, 0.32);
+            background: transparent;
+            color: #f2ead5;
+            text-align: center;
+            font-size: 18px;
+            line-height: 1.4;
+            padding: 12px 6px;
+            outline: none;
+            caret-color: rgba(224, 213, 176, 0.9);
+            transition: border-color 0.35s ease;
+          }
+          .entry-input::placeholder {
+            color: rgba(224, 213, 176, 0.35);
+          }
+          .entry-input:focus {
+            border-bottom-color: rgba(224, 213, 176, 0.95);
+          }
+          .entry-input-invalid {
+            border-bottom-color: rgba(245, 122, 139, 0.95);
+            box-shadow: 0 8px 18px -14px rgba(241, 80, 120, 0.8);
+          }
+          .entry-input-line {
+            position: absolute;
+            left: 0;
+            bottom: 0;
+            width: 100%;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, #e0d5b0, transparent);
+            transform: scaleX(0);
+            transform-origin: center;
+            transition: transform 0.45s ease;
+          }
+          .entry-input-wrap:focus-within .entry-input-line {
+            transform: scaleX(1);
+          }
+          .entry-hint {
+            margin-top: 12px;
+            text-align: center;
+            font-size: 13px;
+            line-height: 1.5;
+            letter-spacing: 0.03em;
+          }
+          .entry-hint-ethereal {
+            color: rgba(255, 142, 162, 0.9);
+            animation: entryFadeIn 0.3s ease;
+          }
+          .entry-hint-warn {
+            color: rgba(233, 205, 152, 0.9);
+            animation: entryFadeIn 0.3s ease;
+          }
+          .entry-cta {
+            width: 100%;
+            margin-top: 28px;
+            position: relative;
+            overflow: hidden;
+            padding: 15px 18px;
+            border-radius: 999px;
+            border: 1px solid rgba(224, 213, 176, 0.4);
+            background: transparent;
+            color: #f2e9d0;
+            cursor: pointer;
+            transition: all 0.3s ease;
+          }
+          .entry-cta > span {
+            position: relative;
+            z-index: 2;
+            align-items: center;
+            font-size: 15px;
+            letter-spacing: 0.3em;
+            font-weight: 300;
+          }
+          .entry-cta:hover {
+            border-color: rgba(224, 213, 176, 0.95);
+            transform: translateY(-1px) scale(1.01);
+            box-shadow: 0 0 24px rgba(224, 213, 176, 0.25);
+          }
+          .entry-cta:hover > span {
+            color: #19140e;
+          }
+          .entry-cta-fill {
+            position: absolute;
+            inset: 0;
+            background: #e0d5b0;
+            transform: translateY(102%);
+            transition: transform 0.3s ease;
+            z-index: 1;
+          }
+          .entry-cta:hover .entry-cta-fill {
+            transform: translateY(0);
+          }
+          .entry-cta:disabled {
+            cursor: not-allowed;
+            opacity: 0.7;
+          }
+          .entry-footnote {
+            margin: 26px 0 0;
+            text-align: center;
+            font-size: 10px;
+            letter-spacing: 0.4em;
+            opacity: 0.4;
+            text-transform: uppercase;
+          }
+          @keyframes entryStarsMove {
+            from { transform: translate3d(0, 0, 0); }
+            to { transform: translate3d(-80px, 40px, 0); }
+          }
+          @keyframes entryAuroraFlow {
+            from { transform: translate3d(-20px, -12px, 0) scale(1); }
+            to { transform: translate3d(16px, 14px, 0) scale(1.08); }
+          }
+          @keyframes entryPulse {
+            0%, 100% { opacity: 0.45; transform: translateX(-50%) scale(1); }
+            50% { opacity: 0.92; transform: translateX(-50%) scale(1.08); }
+          }
+          @keyframes entryFadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+          @keyframes entryShake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
   return (
     <div
+      className={appPhase === 'reading' && panelVisible ? 'result-page' : ''}
       style={{
-        width: '100vw',
-        height: '100vh',
+        width: '100%',
+        height: 'auto',
+        minHeight: '100vh',
         /* dvh for mobile browsers that adjust for URL bar */
         // fallback to 100vh above, override below via CSS
         background: '#07021a',
         position: 'relative',
         display: 'flex',
         flexDirection: 'column',
-        overflow: 'hidden',
+        overflowX: 'hidden',
+        overflowY: appPhase === 'reading' ? 'visible' : 'hidden',
       }}
     >
       <HandGestureDetector
@@ -1457,50 +2077,53 @@ function App() {
       )}
 
       {/* ── Minimal Top Guide ── */}
-      <div
-        className="top-guide"
-        style={{
-          position: 'absolute',
-          top: 'max(10px, env(safe-area-inset-top))',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          textAlign: 'center',
-          zIndex: 16,
-          pointerEvents: 'none',
-          userSelect: 'none',
-          width: 'min(82vw, 620px)',
-        }}
-      >
+      {appPhase !== 'reading' && (
         <div
+          className="top-guide"
           style={{
-            fontSize: 'clamp(10px,1.2vw,13px)',
-            letterSpacing: 'clamp(3px,0.8vw,7px)',
-            textTransform: 'uppercase',
-            marginBottom: 6,
-            fontFamily: 'Georgia,serif',
-            background: 'linear-gradient(90deg,#af8327 0%,#fff1bd 50%,#af8327 100%)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            textShadow: '0 0 12px rgba(212,175,55,0.2)',
-            animation: 'titleBreath 3.6s ease-in-out infinite',
+            position: 'absolute',
+            top: 'max(10px, env(safe-area-inset-top))',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            textAlign: 'center',
+            zIndex: 16,
+            pointerEvents: 'none',
+            userSelect: 'none',
+            width: 'min(82vw, 620px)',
           }}
         >
-          神秘塔罗 · MYSTIC TAROT
+          <div
+            style={{
+              fontSize: 'clamp(10px,1.2vw,13px)',
+              letterSpacing: 'clamp(3px,0.8vw,7px)',
+              textTransform: 'uppercase',
+              marginBottom: 6,
+              fontFamily: 'Georgia,serif',
+              background: 'linear-gradient(90deg,#af8327 0%,#fff1bd 50%,#af8327 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              textShadow: '0 0 12px rgba(212,175,55,0.2)',
+              animation: 'titleBreath 3.6s ease-in-out infinite',
+            }}
+          >
+            神秘塔罗 · MYSTIC TAROT
+          </div>
+          <div
+            className="top-guide-text"
+            style={{
+              color: 'rgba(247,239,216,0.58)',
+              fontSize: 'clamp(10px,1.1vw,13px)',
+              letterSpacing: 1.2,
+              lineHeight: 1.42,
+              fontFamily: 'Georgia,serif',
+              maxWidth: 560,
+              margin: '0 auto',
+            }}
+          >
+            {guideText}
+          </div>
         </div>
-        <div
-          style={{
-            color: 'rgba(247,239,216,0.58)',
-            fontSize: 'clamp(10px,1.1vw,13px)',
-            letterSpacing: 1.2,
-            lineHeight: 1.42,
-            fontFamily: 'Georgia,serif',
-            maxWidth: 560,
-            margin: '0 auto',
-          }}
-        >
-          {guideText}
-        </div>
-      </div>
+      )}
       {appPhase === 'selection' && (
         <div
           style={{
@@ -1533,19 +2156,20 @@ function App() {
         ref={canvasWrapRef}
         className="canvas-shell"
         style={{
-          flex: 1,
-          minHeight: 0,
-          position: 'relative',
+          flex: appPhase === 'reading' ? '0 0 auto' : 1,
+          minHeight: appPhase === 'reading' ? 'auto' : 0,
+          position: appPhase === 'reading' ? 'static' : 'relative',
           touchAction: 'none',
-          paddingTop: 'clamp(64px, 9vh, 110px)',
+          paddingTop: appPhase === 'reading' ? 0 : 'clamp(64px, 9vh, 110px)',
+          overflow: 'visible',
         }}
       >
         <div
           ref={domCarouselRef}
           style={{
             width: '100%',
-            height: '100%',
-            position: 'relative',
+            height: appPhase === 'reading' ? 'auto' : '100%',
+            position: appPhase === 'reading' ? 'static' : 'relative',
             pointerEvents: panelVisible || appPhase !== 'selection' ? 'none' : 'auto',
             perspective: 1400,
             perspectiveOrigin: '50% 42%',
@@ -1691,16 +2315,15 @@ function App() {
         {appPhase === 'reading' && spreadSlots.every(Boolean) && (
           <div
             style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              bottom: 'max(20px, env(safe-area-inset-bottom))',
+              position: 'relative',
               zIndex: 34,
               display: 'flex',
               justifyContent: 'center',
-              alignItems: 'flex-end',
+              alignItems: 'flex-start',
               gap: 'clamp(10px, 3.2vw, 24px)',
               pointerEvents: 'none',
+              marginTop: 'max(12px, env(safe-area-inset-top))',
+              marginBottom: 18,
               paddingLeft: 14,
               paddingRight: 14,
             }}
@@ -1955,19 +2578,13 @@ function App() {
         </button>
       )}
 
-      {/* ── Result panel — 过去/现在/将来 三栏 + 命运结语 ── */}
+      {/* ── Result panel — 占星社 x Idol 101 ── */}
       <div
         className="result-panel"
         style={{
           position: 'relative',
-          margin: panelVisible
-            ? '0 clamp(10px,2vw,22px) max(10px, env(safe-area-inset-bottom))'
-            : '0 clamp(10px,2vw,22px) 0',
-          maxHeight: panelVisible ? 'min(52vh, 420px)' : '0px',
-          opacity: panelVisible ? 1 : 0,
-          transform: `translateY(${panelVisible ? '0' : '10px'})`,
-          transition:
-            'max-height 0.62s cubic-bezier(0.22,1,0.36,1), opacity 0.35s ease, transform 0.35s ease, margin 0.35s ease',
+          display: panelVisible ? 'block' : 'none',
+          margin: '0 clamp(10px,2vw,22px) max(10px, env(safe-area-inset-bottom))',
           background: 'linear-gradient(180deg, rgba(10,5,26,0.88) 0%, rgba(5,2,14,0.94) 100%)',
           backdropFilter: 'blur(20px) saturate(125%)',
           WebkitBackdropFilter: 'blur(20px) saturate(125%)',
@@ -1976,145 +2593,154 @@ function App() {
           padding: 'clamp(14px,2vw,22px) clamp(14px,3vw,28px) clamp(14px,2vw,20px)',
           zIndex: 30,
           boxShadow: '0 -8px 48px rgba(0,0,0,0.6)',
-          overflowX: 'hidden',
-          overflowY: panelVisible ? 'auto' : 'hidden',
-          pointerEvents: panelVisible ? 'auto' : 'none',
+          overflow: 'visible',
+          pointerEvents: 'auto',
         }}
       >
-        <div
-          className="result-panel-content"
-          style={{
-            maxWidth: 1060,
-            margin: '0 auto',
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-            gap: 'clamp(10px, 2.2vw, 18px)',
-            alignItems: 'stretch',
-          }}
-        >
-          {[
-            { title: '过去 (Past)', cardData: pastData, position: 'past' },
-            { title: '现在 (Present)', cardData: presentData, position: 'present' },
-            { title: '将来 (Future)', cardData: futureData, position: 'future' },
-          ].map((col) => (
-            <div
-              key={col.title}
-              className="reading-col"
-              style={{
-                border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: 12,
-                background: 'linear-gradient(180deg, rgba(16,10,34,0.62) 0%, rgba(9,5,22,0.72) 100%)',
-                backdropFilter: 'blur(14px)',
-                WebkitBackdropFilter: 'blur(14px)',
-                padding: '12px 12px 14px',
-                minWidth: 0,
-                overflow: 'hidden',
-              }}
-            >
-              <InterpretationCard
-                position={col.position}
-                name={col.cardData?.name}
-                tags={col.cardData?.tags}
-                description={col.cardData?.description}
-              />
-            </div>
-          ))}
-        </div>
-
-        <div
-          className="fate-summary-shell"
-          style={{
-            marginTop: 14,
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: 12,
-            background: 'linear-gradient(180deg, rgba(14,9,32,0.62) 0%, rgba(8,4,20,0.78) 100%)',
-            backdropFilter: 'blur(14px)',
-            WebkitBackdropFilter: 'blur(14px)',
-            boxShadow: '0 8px 26px rgba(0,0,0,0.28)',
-            padding: '12px 14px',
-          }}
-        >
+        <div className="tarot-result-shell">
           <div
+            className="result-panel-content"
             style={{
-              fontSize: 13,
-              letterSpacing: 2.4,
-              marginBottom: 8,
-              color: '#f5deb3',
-              textTransform: 'uppercase',
+              maxWidth: 1060,
+              margin: '0 auto',
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+              gap: 'clamp(10px, 2.2vw, 18px)',
+              alignItems: 'stretch',
             }}
           >
-            命运结语
-          </div>
-          <div
-            style={{
-              background: 'rgba(0,0,0,0.3)',
-              borderRadius: 15,
-              padding: '12px 14px',
-            }}
-          >
-            {aiStatus === 'loading' ? (
-              <p
+            {[
+              { title: '过去 (Past)', cardData: pastData, position: 'past' },
+              { title: '现在 (Present)', cardData: presentData, position: 'present' },
+              { title: '将来 (Future)', cardData: futureData, position: 'future' },
+            ].map((col) => (
+              <div
+                key={col.title}
+                className="reading-col"
                 style={{
-                  margin: 0,
-                  color: '#dddddd',
-                  fontSize: 'clamp(13px,1.25vw,14px)',
-                  lineHeight: 1.8,
-                  minHeight: 54,
-                  textAlign: 'left',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: 12,
+                  background: 'linear-gradient(180deg, rgba(16,10,34,0.62) 0%, rgba(9,5,22,0.72) 100%)',
+                  backdropFilter: 'blur(14px)',
+                  WebkitBackdropFilter: 'blur(14px)',
+                  padding: '12px 12px 14px',
+                  minWidth: 0,
+                  overflow: 'hidden',
                 }}
               >
+                <InterpretationCard
+                  position={col.position}
+                  name={col.cardData?.name}
+                  tags={col.cardData?.tags}
+                  description={col.cardData?.description}
+                />
+              </div>
+            ))}
+          </div>
+
+          <section className="tarot-fate-section">
+            <div className="tarot-fate-star tarot-fate-star-left">✦</div>
+            <div className="tarot-fate-star tarot-fate-star-right">✦</div>
+
+            <h2 className="tarot-fate-title">✦ 命运结语 ✦</h2>
+
+            {aiStatus === 'loading' ? (
+              <p className="tarot-fate-loading">
                 <span className="fate-loading">✦ 猫灵正在翻阅星历...</span>
               </p>
             ) : (
-              <div
-                style={{
-                  margin: 0,
-                  color: '#dddddd',
-                  fontSize: 'clamp(13px,1.25vw,14px)',
-                  lineHeight: 1.8,
-                  overflowWrap: 'anywhere',
-                  wordBreak: 'break-word',
-                  whiteSpace: 'normal',
-                  textAlign: 'left',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 10,
-                }}
-              >
-                {/* 现状洞察 — always first */}
-                <div className="fate-section">
-                  <span style={{ color: '#f5ce7c', fontWeight: 600 }}>【现状洞察】</span>
-                  <span>{formattedAiSummary.insight || readingTitle || '—'}</span>
+              <div className="tarot-fate-content">
+                <div className="tarot-fate-block">
+                  <span className="tarot-fate-label">【现状洞察】</span>
+                  <p>{insightText}</p>
                 </div>
-                {/* 因果串联 — appears when header arrives in stream */}
-                {sectionBoundaries.chainStarted && (
-                  <div className="fate-section section-appear">
-                    <span style={{ color: '#f5ce7c', fontWeight: 600 }}>【因果串联】</span>
-                    <span>{formattedAiSummary.chain || '—'}</span>
-                  </div>
-                )}
-                {/* 行动建议 — appears last */}
-                {sectionBoundaries.actionStarted && (
-                  <div className="fate-section section-appear">
-                    <span style={{ color: '#f5ce7c', fontWeight: 600 }}>【行动建议】</span>
-                    <span>{formattedAiSummary.action || '—'}</span>
-                  </div>
-                )}
+                <div className={`tarot-fate-block ${sectionBoundaries.chainStarted ? 'section-appear' : ''}`}>
+                  <span className="tarot-fate-label">【因果串联】</span>
+                  <p>{connectionText}</p>
+                </div>
+                <div className={`tarot-fate-block ${sectionBoundaries.actionStarted ? 'section-appear' : ''}`}>
+                  <span className="tarot-fate-label">【行动建议】</span>
+                  {sectionBoundaries.actionStarted ? (
+                    <ol className="tarot-fate-advice-list">
+                      {(adviceItems.length ? adviceItems : [adviceText]).slice(0, 2).map((item, index) => (
+                        <li key={`${index}-${item.slice(0, 16)}`} className="tarot-fate-advice-item">
+                          <span className="tarot-fate-advice-index">{index + 1}、</span>
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p>{adviceText}</p>
+                  )}
+                </div>
               </div>
             )}
-          </div>
-          {aiFallbackNotice && (
-            <div
-              style={{
-                marginTop: 8,
-                color: 'rgba(255, 216, 125, 0.86)',
-                fontSize: 12,
-                letterSpacing: 0.3,
-              }}
-            >
-              {aiFallbackNotice}
+            {aiFallbackNotice && <div className="tarot-fallback">{aiFallbackNotice}</div>}
+          </section>
+
+          <section className="tarot-idol-section">
+            <h3 className="tarot-idol-title">
+              <span className="tarot-idol-spark">✨</span> 星运指南
+            </h3>
+            {starGuideStatus === 'loading' || starGuideStatus === 'streaming' ? (
+              <p className="tarot-idol-desc">✦ 星轨正在对齐你的应援频率...</p>
+            ) : (
+              <p className="tarot-idol-desc">{starParsed.body || '星运指南正在汇聚中。'}</p>
+            )}
+
+            <div className="tarot-idol-tags">
+              <span>幸运色：{starParsed.luckyColor || '—'}</span>
+              <span>幸运物件：{starParsed.luckyItem || '—'}</span>
             </div>
-          )}
+            {starGuideNotice && <div className="tarot-fallback">{starGuideNotice}</div>}
+          </section>
+
+          <section className="tarot-idol-card-zone">
+            <p className="tarot-idol-caption">—— 查看今日与你宇宙连结最深的 IDOL ——</p>
+            <div className="idol-flip-stack">
+              {isIdolFlipped && lockedCosmicIdol?.name && (
+                <div className="idol-name-above">{lockedCosmicIdol.name}</div>
+              )}
+              <div
+                className="card-container group perspective-1000"
+                onClick={() => {
+                  if (isIdolFlipped) return;
+                  setIsIdolFlipped(true);
+                }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    if (!isIdolFlipped) setIsIdolFlipped(true);
+                  }
+                }}
+              >
+                <div className={`card-flip-inner ${isIdolFlipped ? 'rotate-y-180' : 'animate-card-pulse'}`}>
+                  <div className="card-flip-face card-flip-back">
+                    <div className="animate-glow">✦</div>
+                  </div>
+
+                  <div className="card-flip-face card-flip-front rotate-y-180">
+                    <div className="idol-reveal-poster">
+                      <img src={idolPosterUrl} alt="" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {isIdolFlipped && (
+              <a
+                className="tarot-idol-cta"
+                href="https://play.google.com/store/apps/details?id=app.oppaya.kpop_idol_chat_oppaya_app"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                去和他聊聊吧
+              </a>
+            )}
+          </section>
         </div>
       </div>
 
@@ -2173,12 +2799,13 @@ function App() {
 
       <style>{`
         * { box-sizing: border-box; }
-
-        /* Mobile: use dynamic viewport height to account for browser chrome */
-        @supports (height: 100dvh) {
-          body, #root { height: 100dvh !important; }
+        html, body, #root {
+          width: 100%;
+          min-height: 100vh;
+          overflow-x: hidden;
+          overflow-y: auto !important;
         }
-        html, body, #root { width: 100%; overflow: hidden; }
+        .result-page .top-guide-text { display: none; }
 
         .canvas-shell {
           transform: translateZ(0);
@@ -2372,6 +2999,289 @@ function App() {
           animation: fateBlink 1.2s ease-in-out infinite;
           color: #ffd87d;
         }
+        .tarot-result-shell {
+          max-width: 780px;
+          margin: 0 auto;
+          padding: 8px 4px 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 22px;
+        }
+        .tarot-card-info-section {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+        }
+        .tarot-card-info-block {
+          border: 1px solid rgba(255,255,255,0.12);
+          border-radius: 14px;
+          background: linear-gradient(180deg, rgba(16,10,34,0.62) 0%, rgba(9,5,22,0.72) 100%);
+          padding: 10px 12px;
+          min-height: 150px;
+        }
+        .tarot-card-info-title {
+          font-size: 12px;
+          color: rgba(224,213,176,0.9);
+          letter-spacing: 0.06em;
+          margin-bottom: 6px;
+        }
+        .tarot-card-info-name {
+          font-size: 16px;
+          color: #f5deb3;
+          font-weight: 600;
+          margin-bottom: 6px;
+        }
+        .tarot-card-info-desc {
+          margin: 0;
+          font-size: 13px;
+          color: #d1d5db;
+          line-height: 1.6;
+        }
+        .tarot-fate-section {
+          position: relative;
+          padding: clamp(18px, 3vw, 26px);
+          border-radius: 30px;
+          background: rgba(255,255,255,0.05);
+          border: 1px solid rgba(255,255,255,0.1);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          box-shadow: 0 18px 40px rgba(0,0,0,0.35);
+          overflow: hidden;
+        }
+        .tarot-fate-star {
+          position: absolute;
+          top: 16px;
+          color: rgba(224,213,176,0.52);
+        }
+        .tarot-fate-star-left { left: 16px; }
+        .tarot-fate-star-right { right: 16px; }
+        .tarot-fate-title {
+          margin: 0 0 20px;
+          color: #e0d5b0;
+          text-align: center;
+          letter-spacing: 0.3em;
+          font-size: clamp(16px, 2.1vw, 22px);
+          font-family: Georgia, "Times New Roman", serif;
+          font-weight: 500;
+        }
+        .tarot-fate-content {
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+          color: #e5e7eb;
+          line-height: 1.8;
+          font-family: Georgia, "Times New Roman", serif;
+          text-align: left;
+          max-width: 800px;
+          margin: 0 auto;
+        }
+        .tarot-fate-block { opacity: 0.92; }
+        .tarot-fate-label {
+          color: #e0d5b0;
+          display: block;
+          margin-bottom: 6px;
+          font-weight: 700;
+        }
+        .tarot-fate-block p {
+          margin: 0;
+          padding-left: 12px;
+          border-left: 1px solid rgba(224,213,176,0.3);
+          overflow-wrap: anywhere;
+          text-align: left;
+          white-space: pre-wrap;
+        }
+        .tarot-fate-advice-list {
+          margin: 0;
+          padding: 0 0 0 12px;
+          border-left: 1px solid rgba(224,213,176,0.3);
+          list-style: none;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .tarot-fate-advice-item {
+          display: flex;
+          align-items: flex-start;
+          gap: 6px;
+          overflow-wrap: anywhere;
+          text-align: left;
+          line-height: 1.8;
+        }
+        .tarot-fate-advice-index {
+          color: #e0d5b0;
+          font-weight: 700;
+          flex: 0 0 auto;
+        }
+        .tarot-fate-loading {
+          margin: 0;
+          min-height: 54px;
+          color: #dddddd;
+          line-height: 1.8;
+        }
+        .tarot-fallback {
+          margin-top: 10px;
+          color: rgba(255, 216, 125, 0.86);
+          font-size: 12px;
+          letter-spacing: 0.3px;
+        }
+        .tarot-idol-section {
+          padding: clamp(18px, 3vw, 26px);
+          border-radius: 30px;
+          background: linear-gradient(135deg, rgba(88,28,135,0.2), rgba(30,64,175,0.2));
+          border: 1px solid rgba(224,213,176,0.2);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+        }
+        .tarot-idol-title {
+          margin: 0 0 14px;
+          color: #e0d5b0;
+          font-size: 17px;
+          font-weight: 600;
+          letter-spacing: 0.12em;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .tarot-idol-spark {
+          animation: fateBlink 1.5s ease-in-out infinite;
+        }
+        .tarot-idol-desc {
+          margin: 0 0 16px;
+          color: #d1d5db;
+          font-size: 13px;
+          line-height: 1.7;
+          font-style: italic;
+          text-align: left;
+          white-space: pre-wrap;
+        }
+        .tarot-idol-tags {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: center;
+          align-items: stretch;
+          gap: 10px;
+        }
+        .tarot-idol-tags span {
+          padding: 5px 14px;
+          border-radius: 999px;
+          background: rgba(224,213,176,0.1);
+          border: 1px solid rgba(224,213,176,0.3);
+          color: #e0d5b0;
+          font-size: 12px;
+          min-width: 140px;
+          flex: 1 1 180px;
+          max-width: 240px;
+          text-align: center;
+        }
+        .tarot-idol-card-zone {
+          text-align: center;
+          padding-top: 8px;
+        }
+        .tarot-idol-caption {
+          margin: 0 0 22px;
+          color: rgba(224,213,176,0.55);
+          font-size: 14px;
+          font-weight: 500;
+          letter-spacing: 0.18em;
+          line-height: 1.5;
+        }
+        .idol-flip-stack {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 10px;
+        }
+        .idol-name-above {
+          color: #e0d5b0;
+          font-size: 18px;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-align: center;
+          max-width: 260px;
+        }
+        .card-container {
+          width: 192px;
+          height: 288px;
+          margin: 0 auto;
+          cursor: pointer;
+        }
+        .card-flip-inner {
+          position: relative;
+          width: 100%;
+          height: 100%;
+          transition: transform 0.7s;
+          transform-style: preserve-3d;
+        }
+        .card-flip-face {
+          position: absolute;
+          inset: 0;
+          border-radius: 16px;
+          backface-visibility: hidden;
+          -webkit-backface-visibility: hidden;
+          overflow: hidden;
+        }
+        .card-flip-back {
+          background: #1a1a2e;
+          border: 2px solid rgba(224,213,176,0.2);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: 0 0 30px rgba(224,213,176,0.1);
+          color: rgba(224,213,176,0.5);
+          font-size: 32px;
+        }
+        .card-flip-front {
+          border: 2px solid #e0d5b0;
+        }
+        .idol-reveal-poster {
+          width: 100%;
+          height: 100%;
+          background: #120b2b;
+          position: relative;
+          overflow: hidden;
+        }
+        .idol-reveal-poster img {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          object-position: center;
+          filter: saturate(1.04) contrast(1.05);
+        }
+        .tarot-idol-cta {
+          margin-top: 26px;
+          padding: 12px 30px;
+          background: #e0d5b0;
+          color: #000;
+          border: none;
+          border-radius: 999px;
+          font-weight: 700;
+          letter-spacing: 0.2em;
+          cursor: pointer;
+          transition: transform 0.2s ease;
+          box-shadow: 0 0 20px rgba(224,213,176,0.4);
+          text-decoration: none;
+          display: inline-block;
+        }
+        .tarot-idol-cta:hover { transform: scale(1.08); }
+        .tarot-idol-cta:active { transform: scale(0.95); }
+
+        @keyframes card-pulse {
+          0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(224,213,176,0.1); }
+          50% { transform: scale(1.03); box-shadow: 0 0 40px rgba(224,213,176,0.3); }
+        }
+        .animate-card-pulse { animation: card-pulse 3s infinite ease-in-out; }
+        .perspective-1000 { perspective: 1000px; }
+        .transform-style-3d { transform-style: preserve-3d; }
+        .backface-hidden { backface-visibility: hidden; }
+        .rotate-y-180 { transform: rotateY(180deg); }
+
+        @keyframes glow {
+          0%, 100% { opacity: 0.3; filter: blur(2px); }
+          50% { opacity: 1; filter: blur(0px); }
+        }
+        .animate-glow { animation: glow 2s infinite; }
 
         ::-webkit-scrollbar { width:3px; }
         ::-webkit-scrollbar-thumb { background:rgba(212,175,55,0.3); border-radius:2px; }
@@ -2416,6 +3326,9 @@ function App() {
           .result-panel-content {
             grid-template-columns: 1fr !important;
           }
+          .tarot-card-info-section {
+            grid-template-columns: 1fr;
+          }
           .reading-col h3 {
             min-height: 0 !important;
           }
@@ -2428,7 +3341,6 @@ function App() {
           }
           .top-guide > div:first-child { margin-bottom: 2px !important; opacity: 0.84 !important; }
           .top-guide > div:last-child { opacity: 0.62 !important; }
-          .result-panel { max-height: 42vh !important; }
           .canvas-shell { padding-top: max(48px, env(safe-area-inset-top)) !important; }
         }
       `}</style>

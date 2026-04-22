@@ -8,6 +8,9 @@ type ChatBody = {
   pastCard?: TarotCardInput;
   presentCard?: TarotCardInput;
   futureCard?: TarotCardInput;
+  userQuestion?: string;
+  /** 默认 fate：只生成命运结语；starGuide：星运指南（追星向） */
+  intent?: 'fate' | 'starGuide';
 };
 
 const encoder = new TextEncoder();
@@ -43,32 +46,74 @@ export default async function handler(req: Request): Promise<Response> {
       return new Response('Invalid cards payload', { status: 400 });
     }
 
-    const systemPrompt = [
-      '你是一位资深塔罗占卜师，表达风格坚定、平和、专业，带一点洞察人心的穿透力。',
-      '严禁使用空洞抒情词，例如：指尖轻抚、优雅的因果、灵魂的回响，以及同类舞台剧式词汇。',
-      '输出必须清晰、具体、可执行，不要写成诗，不要玄乎其玄。',
-      '结语字数严格 150-200 字。',
-      '必须严格包含且正确引用三张牌名：过去牌、现在牌、未来牌（与输入完全一致）。',
-      '输出采用三层结构，且每层各 1-2 句：',
-      '1) 现状洞察 2) 因果串联 3) 行动建议。',
-    ].join(' ');
+    const userQuestion = String(body.userQuestion ?? '').trim() || '未提供';
+    const intent = body.intent === 'starGuide' ? 'starGuide' : 'fate';
 
-    const userPrompt = [
-      '请按以下信息生成“命运结语”：',
-      `过去：${past.name} (Tags: ${safeTags(past.tags)}, Desc: ${past.description ?? ''})`,
-      `现在：${present.name} (Tags: ${safeTags(present.tags)}, Desc: ${present.description ?? ''})`,
-      `未来：${future.name} (Tags: ${safeTags(future.tags)}, Desc: ${future.description ?? ''})`,
-      '',
-      '硬性规则：',
-      '- 不要复读 Desc 原句，要重组为因果链。',
-      '- 必须体现“因为过去...导致现在...所以未来需要...”的逻辑。',
-      '- 用简单易懂的语句，不要高深抽象。',
-      '- 输出格式如下（保留标题）：',
-      '【现状洞察】...',
-      '【因果串联】...',
-      '【行动建议】...',
-      '- 总字数 150-200 字。',
-    ].join('\n');
+    let systemPrompt = '';
+    let userPrompt = '';
+
+    if (intent === 'starGuide') {
+      const selectedCards = [
+        `过去「${past.name}」：${String(past.description ?? '').trim() || '（无牌面释义）'}`,
+        `现在「${present.name}」：${String(present.description ?? '').trim() || '（无牌面释义）'}`,
+        `未来「${future.name}」：${String(future.description ?? '').trim() || '（无牌面释义）'}`,
+      ].join('\n');
+
+      systemPrompt = [
+        '你是一位懂塔罗、也懂追星语境的运势撰稿人。',
+        '语气温柔、亲切，像追星好友私聊互助，不说教、不端着。',
+        '禁止使用「优雅、因果、灵魂」等词；不要写成散文诗。',
+        '核心：必须结合「牌面含义」解读「追星行为」（抢票、应援、心态、线下见面磁场等）。',
+        '若牌意偏积极，可偏向欧气、现场高光；若偏内省或等待类牌，可偏向佛系追星、心态建设、静候回归。',
+        '「星运解读」正文绝对不能包含“幸运色”或“幸运物”信息。 严禁出现任何艺人姓名、昵称、组合名（中英文都不允许）。',
+      ].join(' ');
+
+      userPrompt = [
+        '输入变量：',
+        `userQuestion：${userQuestion}`,
+        'selectedCards（三张牌名及含义）：',
+        selectedCards,
+        '',
+        '请输出「星运指南」正文，并单独给出幸运色与幸运物。正文禁止出现任何艺人名字。',
+        '严格按以下格式输出（保留标题行）：',
+        '【星运解读】',
+        '（此处 120–180 字，必须引用牌意并与追星场景结合）',
+        '',
+        '幸运色：（一个词或短语）',
+        '幸运物：（一个与追星相关的物件或活动）',
+        '',
+        '硬性规则：',
+        '- 总字数约 180–240 字（含幸运色、幸运物两行）。',
+        '- 幸运色、幸运物只能出现在最后两行，严禁在【星运解读】正文重复出现。',
+        '- 不要输出与上述无关的板块标题。',
+      ].join('\n');
+    } else {
+      systemPrompt = [
+        '你是一位洞察力极强的资深塔罗占卜师。',
+        '核心任务：必须深度结合「用户提问」，将三张牌的能量转化为具体的现实生活图景。',
+        '严禁直接生硬地套用牌面释义，要将牌面的含义“揉碎”进对用户困惑的分析中。',
+        '语气平和、专业，充满悲悯心与客观性。',
+        '只输出「命运结语」板块，确保每一句话都是在针对性地回答用户的问题。',
+      ].join(' ');
+
+      userPrompt = [
+        '请按以下信息生成「命运结语」：',
+        `用户提问：${userQuestion}`,
+        `过去：${past.name}（Tags: ${safeTags(past.tags)}；含义：${past.description ?? ''}）`,
+        `现在：${present.name}（Tags: ${safeTags(present.tags)}；含义：${present.description ?? ''}）`,
+        `未来：${future.name}（Tags: ${safeTags(future.tags)}；含义：${future.description ?? ''}）`,
+        '',
+        '只输出以下三行标题及正文（不要输出其它标题）：',
+        '【现状洞察】：结合用户提问的具体情境，利用“现在”牌面揭示用户当下最真实、最隐秘的心态或困境根源。',
+        '【因果串联】：连接“过去”到“未来”，描述这种能量是如何流动的。避免说“从某某牌到某某牌”，要说“从那种初期的某种状态演变为当下的某种局势”。',
+        '【行动建议】：针对用户的问题，给出 1-2 条具有画面感、可立即执行的建议。',
+        '',
+        '硬性规则：',
+        '- 总字数 180–240 字。',
+        '- 体现「过去 → 现在 → 未来」的逻辑链。',
+        '- 严禁跳脱出用户的问题范围。',
+      ].join('\n');
+    }
 
     const upstream = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
