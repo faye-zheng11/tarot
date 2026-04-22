@@ -2076,7 +2076,7 @@ function App() {
               </p>
               <div className="tarot-instruction-box" aria-label="手势操作说明">
                 <span className="tarot-guide-item">
-                  ✋ <strong>张开手掌</strong> 即为翻牌
+                  ✋ <strong>张开手掌</strong> 即可洗牌
                 </span>
                 <span className="tarot-guide-divider" aria-hidden="true">
                   |
